@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dji-mini3-gimbal-cal"
+version = "0.1.0"
+description = "Experimental DJI Mini 3 (WM163) gimbal repair-calibration helper"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+dependencies = ["pyserial>=3.5,<4"]
+
+[project.scripts]
+mini3-gimbal-cal = "mini3_gimbal_cal:main"
