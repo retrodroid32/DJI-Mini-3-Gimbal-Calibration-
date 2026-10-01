@@ -1,0 +1,33 @@
+DJI MINI 3 / WM163 - WINDOWS QUICK START
+
+1. Remove the propellers from the aircraft.
+2. Install Python 3.10 or newer.
+3. Open Command Prompt in this folder.
+4. Run:
+
+   python -m pip install -r requirements.txt
+
+5. Connect the Mini 3 to the PC and note its COM port in Device Manager.
+6. Verify the tool without touching hardware:
+
+   python mini3_gimbal_cal.py dry-run joint-coarse --seq 0xD839
+
+   Expected:
+   55 0e 04 66 0a 04 39 d8 20 04 08 01 ee 6c
+
+7. Put the aircraft on a solid level surface.
+8. Start JointCoarse, replacing COM3 with your actual port:
+
+   python mini3_gimbal_cal.py -vv joint-coarse --port COM3 --yes
+
+9. Do not touch the aircraft while the gimbal moves.
+10. Power-cycle the aircraft and check gimbal centering.
+11. Try DJI Fly automatic gimbal calibration again.
+12. If JointCoarse alone does not resolve the repair and the gimbal moves freely, LinearHall can be tested:
+
+   python mini3_gimbal_cal.py -vv linear-hall --port COM3 --yes
+
+IMPORTANT:
+- This is for DJI Mini 3 / WM163, NOT Mini 3 Pro / WM162.
+- This software does not flash firmware.
+- Save the -vv console output if the result is not centered; those packets are useful for decoding WM163 completion status.
