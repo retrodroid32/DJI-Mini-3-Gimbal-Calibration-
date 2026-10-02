@@ -101,6 +101,7 @@ The probe currently sends only read requests:
 
 - Flight Controller command set `0x03`, command `0x74` (device info / aircraft serial response);
 - General command set `0x00`, command `0x32` (ActiveStatus GET) to the camera and gimbal using the GET selectors found in DJI app code;
+- Gimbal command set `0x04`, command `0x1F` (GetSerialParams) with payload `00 02`, matching DJI app code exactly;
 - General command set `0x00`, command `0x51` (Get Serial Number) to the flight controller.
 
 The first live WM163 capture showed that `0x00/0x51` is useful on the flight controller but returned only `E0` from the camera and no matching gimbal response, so v0.3.0 no longer uses it as the default camera/gimbal identity probe.
@@ -135,3 +136,10 @@ The project is distributed under GPL-3.0-or-later to remain license-compatible w
 ## Safety / warranty
 
 There is no warranty. A repair-calibration command can move the gimbal unexpectedly. Do not fly during testing. This tool intentionally does not flash firmware because using WM162/other-model service firmware on WM163 could damage the aircraft.
+
+
+### v0.4.0 WM163 note
+
+A live WM163 run showed `E3` as the first byte of both camera and gimbal ActiveStatus replies. In DJI app code, `E3` maps to `GET_PARAM_FAILED`, so those replies are now reported as command failures rather than opaque identity data.
+
+v0.4.0 therefore adds the app-verified read-only gimbal serial request `0x04/0x1F` with payload `00 02`. The camera-specific `0x02/0x90` serial-number command is documented in modern DJI command maps, but its request layout has not yet been builder-verified, so this tool does not send it by default.
