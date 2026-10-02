@@ -170,3 +170,25 @@ be tested before calling it a serial number.
 
 The WM160 camera abstraction uses this returned Sensor ID to satisfy the SDK
 `SerialNumber` getter. v0.5.0 adds this read-only probe for WM163 testing.
+
+
+## Response framing correction
+
+DJI's `RecvPack` consumes a one-byte `ccode` on response packets for commands
+that require completion codes before assigning the remaining bytes to `_recData`.
+The standalone Python tool sees the raw DUML payload, so it must remove this byte
+explicitly before applying DJI model-class offsets.
+
+For `DataCameraGetSensorID`, the WM163 live response decoded successfully after
+this correction as:
+
+- ccode: OK
+- sensor type: one byte
+- ID length: 14 bytes
+- camera/sensor identifier: printable ASCII
+
+For `DataGimbalGetSerialParams`, the same correction leaves a two-byte data
+header followed by a 14-byte non-ASCII serial field. The project records that
+field as opaque binary serial bytes until its WM163 encoding is understood.
+
+No device-specific serials or captured identifiers are documented here.
