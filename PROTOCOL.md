@@ -148,3 +148,25 @@ v0.4.0 adds this exact read-only request to `identify`.
 Modern command maps also name camera command `0x02/0x90` as
 `uav_camera_serial_number_req`, but the request payload layout is not
 builder-verified in the available app source, so it is not sent automatically.
+
+
+## 2026-10-02 direct gimbal identity capture
+
+WM163 replied successfully to GIMBAL `0x04/0x1F` / payload `00 02` with
+a two-byte prefix followed by a 15-byte non-ASCII value. The available DJI app
+class expects ASCII on older products, so v0.5.0 records the WM163 value as an
+opaque binary fingerprint. Its persistence across repeated boots still needs to
+be tested before calling it a serial number.
+
+## Builder-verified camera Sensor ID query
+
+`DataCameraGetSensorID` in DJI app code:
+
+- receiver: CAMERA (1)
+- command set: CAMERA (2)
+- command ID: `0xB5`
+- request payload: `00 00 00 00`
+- response layout: byte 0 sensor type, byte 1 ID length, bytes 2.. ID
+
+The WM160 camera abstraction uses this returned Sensor ID to satisfy the SDK
+`SerialNumber` getter. v0.5.0 adds this read-only probe for WM163 testing.
