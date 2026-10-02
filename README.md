@@ -187,3 +187,23 @@ These are General/GetSerialNum (\`0x00/0x51\`) **read requests only**. The tool
 does not write any of these identifiers and does not claim that any one of them is
 a camera/gimbal binding record. The purpose is to inventory the WM163 service
 identity state before researching any association mechanism.
+
+
+### v0.7.0 passive gimbal capture
+
+`capture-gimbal` opens the DJI virtual COM port and only listens. It does not
+transmit a DUML command. This is intended for WM163 cases where a command is known
+to exist (for example gimbal calibration-data status) but its safe request layout
+has not yet been capture-verified.
+
+Example:
+
+```text
+python mini3_gimbal_cal.py -v capture-gimbal --port COM23 --seconds 30
+```
+
+Start the capture first, then reproduce the DJI Fly gimbal calibration/error while
+the timer is running. The tool prints gimbal-related frames and a compact summary.
+
+Also corrected the legacy DJI completion-code mapping: `0xE3` is
+`INVALID_PARAM`; `0xE7` is `GET_PARAM_FAILED`.
