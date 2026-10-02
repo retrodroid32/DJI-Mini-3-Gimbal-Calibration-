@@ -94,3 +94,30 @@ Two read requests are now implemented by the `identify` command:
 For WM163, camera/gimbal implementation details remain provisional. The command is
 therefore read-only and preserves raw response bytes. No Set Serial Number
 (`0x00/0x50`) or pairing/encryption write is implemented.
+
+
+## 2026-10-02 live WM163 identity capture
+
+A live Mini 3 / WM163 capture established several useful points:
+
+- FC `cmd_set=0x03, cmd_id=0x74` returned a normal status byte followed by the
+  aircraft/flight-controller serial.
+- FC General/Get Serial Number `0x00/0x51` returned
+  `status + uint16_le length + serial + trailing bytes`.
+- Camera General/Get Serial Number `0x00/0x51` returned only `E0`.
+- Gimbal General/Get Serial Number `0x00/0x51` produced no matching reply.
+- The flight-controller debug stream repeatedly reported
+  `[D-GYRO_ACC] ... ns_ex_flag_error is 32`, and later emitted
+  `[L-GYRO_ACC][0] mis cali time`, `flag_misalign fff0`, and NaN calibration
+  values. These messages are recorded as evidence of an unresolved gyro/accelerometer
+  calibration/service state, but they are not yet attributed specifically to the
+  replacement gimbal IMU.
+
+Because older DJI app code obtains camera/gimbal identity through General ActiveStatus
+(`0x00/0x32`), v0.3.0 changes the default read-only identity probe to:
+
+- camera: ActiveStatus GET Ver1_0 selector `01`;
+- gimbal: ActiveStatus GET Ver1_1 selector `11`.
+
+No ActiveStatus SET, serial-number write, encryption/pairing write, or calibration-data
+write is implemented.
