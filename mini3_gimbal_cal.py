@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -97,6 +97,7 @@ DJI_CCODES = {
     0xEC: "CAMERA_CRITICAL_ERR",
     0xED: "PARAM_NOT_AVAILABLE",
     0xFB: "DEVICE_LOW_POWER",
+    0xFD: "FLASH_FLUSHING",
     0xFE: "UPDATE_NOCONNECT_CAMERA",
     0xFF: "UNDEFINED",
 }
