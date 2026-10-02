@@ -11,7 +11,9 @@ from mini3_gimbal_cal import (
     crc16_duML,
     crc8_header,
     describe_active_status_payload,
+    describe_ccode_payload,
     describe_fc_device_info_payload,
+    describe_gimbal_serial_payload,
     describe_general_serial_payload,
     describe_payload,
     parse_frame,
@@ -98,3 +100,16 @@ def test_describes_active_status_v10_serial():
     payload = b"\x01" + b"\x00" * 7 + b"CAMERA1234"
     desc = describe_active_status_payload(payload, "v1.0")
     assert "CAMERA1234" in desc
+
+
+def test_decodes_e3_as_get_param_failed():
+    assert describe_ccode_payload(b"\xe3") == "ccode=0xe3 (GET_PARAM_FAILED)"
+    desc = describe_active_status_payload(b"\xe3" + b"\x00" * 5, "v1.1")
+    assert "GET_PARAM_FAILED" in desc
+
+
+def test_describes_gimbal_direct_serial_response():
+    payload = b"\x00\x00GIMBAL123456\x00"
+    desc = describe_gimbal_serial_payload(payload)
+    assert "GIMBAL123456" in desc
+    assert "prefix=00 00" in desc
