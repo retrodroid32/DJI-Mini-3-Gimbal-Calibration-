@@ -117,14 +117,19 @@ def test_describes_gimbal_direct_serial_response():
 
 
 def test_describes_camera_sensor_id_ascii():
-    payload = b"\x02\x0eCAMERA12345678"
+    # Raw DUML response payload includes ccode=0 before camera response data.
+    payload = b"\x00\x03\x0eSYNTHCAM123456"
     desc = describe_camera_sensor_id_payload(payload)
-    assert "sensor_type=0x02" in desc
-    assert "CAMERA12345678" in desc
+    assert "ccode=0x00" in desc
+    assert "sensor_type=0x03" in desc
+    assert "SYNTHCAM123456" in desc
 
 
-def test_describes_binary_gimbal_fingerprint():
-    payload = bytes.fromhex("00 02 9e fc 71 b0 9f 26 97 40 c4 f8 b4 b7 e9 20 b7")
+def test_describes_binary_gimbal_serial_bytes():
+    # Synthetic fixture only; do not commit device-specific captured identifiers.
+    payload = bytes.fromhex("00 02 aa 10 20 30 40 50 60 70 80 90 a0 b0 c0 d0 e0")
     desc = describe_gimbal_serial_payload(payload)
-    assert "binary_fingerprint=9efc71b09f269740c4f8b4b7e920b7" in desc
-    assert "15 bytes" in desc
+    assert "ccode=0x00" in desc
+    assert "header=02 aa" in desc
+    assert "binary_serial_bytes=102030405060708090a0b0c0d0e0" in desc
+    assert "14 bytes" in desc
