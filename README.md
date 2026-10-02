@@ -170,3 +170,20 @@ v0.5.1 mirrors that behavior:
   first two data bytes as a header and the remaining bytes as the serial field.
 
 Device-specific capture values are not used as test fixtures; tests use synthetic data.
+
+
+### v0.6.0 flight-controller component identifiers
+
+If no pre-replacement DJI Fly flight record is available, \`identify\` now follows
+DJI's \`DataCommonGetDeviceSerialNumber\` read path and queries all four documented
+selector values from the flight controller:
+
+- \`01\` — \`BoardNum\`
+- \`02\` — \`ChipId\`
+- \`03\` — \`ModuleNum\`
+- \`04\` — \`DeviceNum\`
+
+These are General/GetSerialNum (\`0x00/0x51\`) **read requests only**. The tool
+does not write any of these identifiers and does not claim that any one of them is
+a camera/gimbal binding record. The purpose is to inventory the WM163 service
+identity state before researching any association mechanism.
