@@ -10,6 +10,7 @@ from mini3_gimbal_cal import (
     build_packet,
     crc16_duML,
     crc8_header,
+    describe_active_status_payload,
     describe_fc_device_info_payload,
     describe_general_serial_payload,
     describe_payload,
@@ -74,3 +75,26 @@ def test_describes_fc_device_info_payload():
     assert "status=0x00" in desc
     assert "1581F5FJC254J0" in desc
     assert "extra=44" in desc
+
+
+def test_describes_wm163_fc_serial_with_leading_status():
+    serial_text = b"EXAMPLE1234567"
+    payload = b"\x00" + len(serial_text).to_bytes(2, "little") + serial_text + b"\x00\xf9"
+    desc = describe_general_serial_payload(payload)
+    assert "status=0x00" in desc
+    assert "EXAMPLE1234567" in desc
+    assert "declared_len=14" in desc
+
+
+def test_describes_active_status_v11_serial():
+    serial_text = b"GIMBAL123456"
+    payload = b"\x01" + b"\x00" * 7 + bytes([len(serial_text)]) + serial_text
+    desc = describe_active_status_payload(payload, "v1.1")
+    assert "GIMBAL123456" in desc
+    assert "sn_len=12" in desc
+
+
+def test_describes_active_status_v10_serial():
+    payload = b"\x01" + b"\x00" * 7 + b"CAMERA1234"
+    desc = describe_active_status_payload(payload, "v1.0")
+    assert "CAMERA1234" in desc
