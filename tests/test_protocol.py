@@ -104,10 +104,10 @@ def test_describes_active_status_v10_serial():
     assert "CAMERA1234" in desc
 
 
-def test_decodes_e3_as_get_param_failed():
-    assert describe_ccode_payload(b"\xe3") == "ccode=0xe3 (GET_PARAM_FAILED)"
+def test_decodes_e3_as_invalid_param():
+    assert describe_ccode_payload(b"\xe3") == "ccode=0xe3 (INVALID_PARAM)"
     desc = describe_active_status_payload(b"\xe3" + b"\x00" * 5, "v1.1")
-    assert "GET_PARAM_FAILED" in desc
+    assert "INVALID_PARAM" in desc
 
 
 def test_describes_gimbal_direct_serial_response():
