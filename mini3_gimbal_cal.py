@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -36,6 +36,7 @@ CMD_SET_GENERAL = 0
 CMD_SET_FLYCONTROLLER = 3
 CMD_SET_ZENMUSE = 4
 
+CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
 CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
@@ -50,6 +51,13 @@ IDENTITY_TARGETS = (
     ("camera", COMM_DEV_CAMERA),
     ("gimbal", COMM_DEV_GIMBAL),
     ("flight-controller", COMM_DEV_FLYCONTROLLER),
+)
+
+# Legacy DJI ActiveStatus GET selectors from decompiled app code.
+# Camera defaults to Ver1_0 GET=0x01; gimbal explicitly selects Ver1_1 GET=0x11.
+ACTIVE_STATUS_PROBES = (
+    ("camera active-status", COMM_DEV_CAMERA, b"\x01", "v1.0"),
+    ("gimbal active-status", COMM_DEV_GIMBAL, b"\x11", "v1.1"),
 )
 
 CALIB_COMMANDS = {
@@ -271,16 +279,45 @@ def _ascii_until_nul(data: bytes) -> str:
 def describe_general_serial_payload(payload: bytes) -> str:
     """Describe a General/Get Serial Number (0x00/0x51) response conservatively.
 
-    Older DJI app code parses this family as a little-endian uint16 length followed
-    by UTF-8 serial text. WM163 behavior is not yet capture-validated, so a failed
-    parse is reported as raw bytes instead of being treated as an error.
+    The 2026-10-02 WM163 capture showed a leading status byte followed by a
+    little-endian uint16 length and ASCII serial. Older DJI app code also shows a
+    two-byte length-prefixed form without the leading status byte.
     """
+    if len(payload) >= 3:
+        status = payload[0]
+        declared = int.from_bytes(payload[1:3], "little")
+        if 0 < declared <= len(payload) - 3:
+            serial_text = _ascii_until_nul(payload[3 : 3 + declared])
+            if serial_text:
+                return f"status=0x{status:02x}, serial={serial_text!r} (declared_len={declared})"
+
     if len(payload) >= 2:
         declared = int.from_bytes(payload[:2], "little")
         if 0 < declared <= len(payload) - 2:
             serial_text = _ascii_until_nul(payload[2 : 2 + declared])
             if serial_text:
                 return f"serial={serial_text!r} (declared_len={declared})"
+    return f"raw={payload.hex(' ')}"
+
+
+def describe_active_status_payload(payload: bytes, version_hint: str) -> str:
+    """Decode legacy ActiveStatus GET replies conservatively.
+
+    v1.0 uses a fixed 10-byte serial beginning at offset 8.
+    v1.1 uses a serial-length byte at offset 8 and serial bytes at offset 9.
+    """
+    if version_hint == "v1.1" and len(payload) >= 10:
+        sn_len = payload[8]
+        if 0 < sn_len <= 16 and len(payload) >= 9 + sn_len:
+            serial_text = _ascii_until_nul(payload[9 : 9 + sn_len])
+            if serial_text:
+                return f"active=0x{payload[0]:02x}, serial={serial_text!r}, sn_len={sn_len}"
+
+    if version_hint == "v1.0" and len(payload) >= 18:
+        serial_text = _ascii_until_nul(payload[8:18])
+        if serial_text:
+            return f"active=0x{payload[0]:02x}, serial={serial_text!r}"
+
     return f"raw={payload.hex(' ')}"
 
 
@@ -360,11 +397,17 @@ def send_read_query(
 
     reader = FrameReader()
     deadline = time.monotonic() + timeout_seconds
+    skipped = 0
     for frame in read_frames(ser_obj, reader, deadline):
-        if verbose > 1:
-            print(f"{label} RX: {frame.hex}")
         if is_reply_to(frame, sender=receiver, seq=seq, cmd_set=cmd_set, cmd_id=cmd_id):
+            if verbose > 1:
+                print(f"{label} RX: {frame.hex}")
             return frame
+        skipped += 1
+        if verbose > 2:
+            print(f"{label} RX(other): {frame.hex}")
+    if verbose > 1 and skipped:
+        print(f"{label}: ignored {skipped} unrelated DUML frame(s) while waiting for the reply")
     return None
 
 
@@ -398,28 +441,45 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
             responses += 1
             print(f"FC device-info: {describe_fc_device_info_payload(fc_info.payload)}")
 
-        # General/Get Serial Number is documented as cmd 0x00/0x51. Older DJI app
-        # code sends one-byte payload 0x01 and parses uint16 length + UTF-8 text.
-        # On WM163 this is intentionally a raw/read-only probe until captures
-        # establish which modules implement it and the exact response layout.
-        for target_name, target_id in IDENTITY_TARGETS:
+        # ActiveStatus is the older DJI app's actual camera/gimbal activation-
+        # identity path. These are GET selectors only; no activation data is written.
+        for label, target_id, request_payload, version_hint in ACTIVE_STATUS_PROBES:
             frame = send_read_query(
                 ser_obj,
                 receiver=target_id,
                 cmd_set=CMD_SET_GENERAL,
-                cmd_id=CMD_ID_GENERAL_GET_SN,
-                payload=b"\x01",
+                cmd_id=CMD_ID_GENERAL_ACTIVE_STATUS,
+                payload=request_payload,
                 timeout_seconds=timeout_seconds,
                 verbose=verbose,
-                label=f"{target_name} serial",
+                label=label,
             )
             if frame is None:
-                print(f"{target_name} serial: no matching response")
+                print(f"{label}: no matching response")
             else:
                 responses += 1
-                print(f"{target_name} serial: {describe_general_serial_payload(frame.payload)}")
+                print(f"{label}: {describe_active_status_payload(frame.payload, version_hint)}")
 
-    print("NOTE: WM163 camera/gimbal serial response semantics are provisional; preserve raw -vv output.")
+        # Keep General/Get Serial Number for the flight controller only. The first
+        # live WM163 capture showed camera=0xE0 and no gimbal reply, while the FC
+        # returned a valid status + uint16 length + serial response.
+        frame = send_read_query(
+            ser_obj,
+            receiver=COMM_DEV_FLYCONTROLLER,
+            cmd_set=CMD_SET_GENERAL,
+            cmd_id=CMD_ID_GENERAL_GET_SN,
+            payload=b"\x01",
+            timeout_seconds=timeout_seconds,
+            verbose=verbose,
+            label="flight-controller serial",
+        )
+        if frame is None:
+            print("flight-controller serial: no matching response")
+        else:
+            responses += 1
+            print(f"flight-controller serial: {describe_general_serial_payload(frame.payload)}")
+
+    print("NOTE: WM163 camera/gimbal ActiveStatus semantics are still being capture-validated; preserve raw -vv output.")
     print("Do not post real aircraft or module serial numbers publicly.")
     return 0 if responses else 4
 
