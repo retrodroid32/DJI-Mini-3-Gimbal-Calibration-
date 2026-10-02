@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -79,11 +79,20 @@ DJI_CCODES = {
     0xE0: "INVALID_CMD",
     0xE1: "TIMEOUT_REMOTE",
     0xE2: "OUT_OF_MEMORY",
-    0xE3: "GET_PARAM_FAILED",
+    0xE3: "INVALID_PARAM",
     0xE4: "NOT_SUPPORT_CURRENT_STATE",
     0xE5: "TIME_NOT_SYNC",
     0xE6: "SET_PARAM_FAILED",
-    0xE7: "GET_PARAM_FAILED_ALT",
+    0xE7: "GET_PARAM_FAILED",
+    0xE8: "SDCARD_NOT_INSERTED",
+    0xE9: "SDCARD_FULL",
+    0xEA: "SDCARD_ERR",
+    0xEB: "SENSOR_ERR",
+    0xEC: "CAMERA_CRITICAL_ERR",
+    0xED: "PARAM_NOT_AVAILABLE",
+    0xFB: "DEVICE_LOW_POWER",
+    0xFE: "UPDATE_NOCONNECT_CAMERA",
+    0xFF: "UNDEFINED",
 }
 
 CALIB_COMMANDS = {
@@ -666,6 +675,57 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
     return 0 if responses else 4
 
 
+def run_passive_gimbal_capture(port: str, baudrate: int, seconds: float, verbose: int) -> int:
+    """Passively listen for DUML frames involving the gimbal. Sends no packets."""
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print(f"Mode: PASSIVE capture for {seconds:.1f} seconds; no DUML request is transmitted.")
+    print("While this runs, reproduce the DJI Fly action/error you want to observe.")
+
+    reader = FrameReader()
+    deadline = time.monotonic() + seconds
+    started = time.monotonic()
+    counts: dict[tuple[int, int, int, int, bytes], int] = {}
+    total = 0
+
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        ser_obj.reset_input_buffer()
+        for frame in read_frames(ser_obj, reader, deadline):
+            if frame.sender != COMM_DEV_GIMBAL and frame.receiver != COMM_DEV_GIMBAL:
+                continue
+            total += 1
+            key = (frame.sender, frame.receiver, frame.cmd_set, frame.cmd_id, frame.payload)
+            counts[key] = counts.get(key, 0) + 1
+            if verbose:
+                elapsed = time.monotonic() - started
+                print(
+                    f"[{elapsed:6.2f}s] sender={frame.sender} receiver={frame.receiver} "
+                    f"set=0x{frame.cmd_set:02x} id=0x{frame.cmd_id:02x} "
+                    f"payload={frame.payload.hex(' ')}"
+                )
+            if verbose > 1:
+                print(f"  RAW: {frame.hex}")
+
+    print(f"Captured {total} gimbal-related DUML frame(s).")
+    if not counts:
+        print("No gimbal-related frames were observed.")
+        return 0
+
+    print("Summary (count sender->receiver set/id payload):")
+    for (sender, receiver, cmd_set, cmd_id, payload), count in sorted(
+        counts.items(), key=lambda item: (-item[1], item[0][2], item[0][3])
+    ):
+        print(
+            f"{count:4d}  {sender}->{receiver}  "
+            f"0x{cmd_set:02x}/0x{cmd_id:02x}  {payload.hex(' ')}"
+        )
+    return 0
+
+
 def run_calibration(port: str, baudrate: int, command_name: str, monitor_seconds: float, verbose: int) -> int:
     if serial is None:
         print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
@@ -792,6 +852,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="per-query response timeout (default: 2.5 seconds)",
     )
 
+    capture = sub.add_parser(
+        "capture-gimbal",
+        help="passively capture DUML traffic to/from the gimbal without transmitting requests",
+    )
+    capture.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    capture.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    capture.add_argument(
+        "--seconds",
+        type=float,
+        default=30.0,
+        help="capture duration in seconds (default: 30)",
+    )
+
     dry = sub.add_parser("dry-run", help="build a known request packet without touching hardware")
     dry.add_argument("command", choices=tuple(CALIB_COMMANDS))
     dry.add_argument("--seq", type=lambda s: int(s, 0), default=0xD839)
@@ -816,6 +889,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "identify":
         return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
+
+    if args.action == "capture-gimbal":
+        return run_passive_gimbal_capture(args.port, args.baudrate, args.seconds, args.verbose)
 
     if not args.yes:
         parser.error(
