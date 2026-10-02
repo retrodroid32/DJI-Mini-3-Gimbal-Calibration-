@@ -207,3 +207,22 @@ the timer is running. The tool prints gimbal-related frames and a compact summar
 
 Also corrected the legacy DJI completion-code mapping: `0xE3` is
 `INVALID_PARAM`; `0xE7` is `GET_PARAM_FAILED`.
+
+
+### v0.8.0 historical flight-log identity extraction
+
+The tool can now read the unencrypted identity metadata from DJI flight records
+without a DJI API key:
+
+```text
+python mini3_gimbal_cal.py flightlog-info "DJIFlightRecord_2024-09-25_[16-12-06].txt"
+```
+
+For v13/v14 logs, DJI stores the Details metadata inside an XOR-obfuscated
+AuxiliaryInfo block. The command decodes only that header metadata and reports
+aircraft, camera, RC, battery, app, and product identifiers. It does not decrypt
+the flight telemetry stream.
+
+This is useful after a camera/gimbal replacement because an older flight record
+can establish the camera identity that the aircraft used before the repair.
+No device-specific serials are committed to this repository.
