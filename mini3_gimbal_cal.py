@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -53,6 +53,16 @@ IDENTITY_TARGETS = (
     ("camera", COMM_DEV_CAMERA),
     ("gimbal", COMM_DEV_GIMBAL),
     ("flight-controller", COMM_DEV_FLYCONTROLLER),
+)
+
+# DJI DataCommonGetDeviceSerialNumber selectors. The public app implementation
+# names these BoardNum, ChipId, ModuleNum, and DeviceNum and sends the selector
+# as the one-byte payload of General/GetSerialNum (0x00/0x51).
+FC_DEVICE_ID_PROBES = (
+    ("fc board-number", 0x01, "BoardNum"),
+    ("fc chip-id", 0x02, "ChipId"),
+    ("fc module-number", 0x03, "ModuleNum"),
+    ("fc device-number", 0x04, "DeviceNum"),
 )
 
 # Legacy DJI ActiveStatus GET selectors from decompiled app code.
@@ -314,6 +324,46 @@ def describe_general_serial_payload(payload: bytes) -> str:
             if serial_text:
                 return f"serial={serial_text!r} (declared_len={declared})"
     return f"raw={payload.hex(' ')}"
+
+
+def describe_common_device_id_payload(payload: bytes) -> str:
+    """Decode raw General/GetSerialNum response for a selected FC identifier.
+
+    Raw DUML response layout observed on WM163:
+      ccode | uint16_le length | identifier bytes | optional trailing bytes
+
+    DJI's DataCommonGetDeviceSerialNumber strips ccode first, then reads the
+    two-byte length and identifier. Keep a hex fallback for non-ASCII IDs.
+    """
+    if not payload:
+        return "empty payload"
+    ccode = payload[0]
+    if ccode not in (0x00, 0x01):
+        return describe_ccode_payload(payload)
+    if len(payload) < 3:
+        return f"ccode=0x{ccode:02x}, raw={payload[1:].hex(' ')}"
+
+    declared = int.from_bytes(payload[1:3], "little")
+    available = payload[3:]
+    if declared <= 0 or declared > len(available):
+        return (
+            f"ccode=0x{ccode:02x}, declared_len={declared}, "
+            f"raw={available.hex(' ')}"
+        )
+
+    ident = available[:declared]
+    extra = available[declared:]
+    text_id = _ascii_until_nul(ident)
+    if text_id and len(text_id) == len(ident.rstrip(b"\x00")):
+        desc = f"ccode=0x{ccode:02x}, id={text_id!r}, declared_len={declared}"
+    else:
+        desc = (
+            f"ccode=0x{ccode:02x}, binary_id={ident.hex()} "
+            f"({declared} bytes)"
+        )
+    if extra:
+        desc += f", extra={extra.hex(' ')}"
+    return desc
 
 
 def describe_ccode_payload(payload: bytes) -> str:
@@ -587,26 +637,31 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
             responses += 1
             print(f"gimbal direct-serial: {describe_gimbal_serial_payload(frame.payload)}")
 
-        # Keep General/Get Serial Number for the flight controller only. The first
-        # live WM163 capture showed camera=0xE0 and no gimbal reply, while the FC
-        # returned a valid status + uint16 length + serial response.
-        frame = send_read_query(
-            ser_obj,
-            receiver=COMM_DEV_FLYCONTROLLER,
-            cmd_set=CMD_SET_GENERAL,
-            cmd_id=CMD_ID_GENERAL_GET_SN,
-            payload=b"\x01",
-            timeout_seconds=timeout_seconds,
-            verbose=verbose,
-            label="flight-controller serial",
-        )
-        if frame is None:
-            print("flight-controller serial: no matching response")
-        else:
-            responses += 1
-            print(f"flight-controller serial: {describe_general_serial_payload(frame.payload)}")
+        # Read the four FC identifier selectors defined by DJI's
+        # DataCommonGetDeviceSerialNumber. Selector 0x01 was already capture-
+        # validated on WM163; 0x02..0x04 remain read-only discovery probes.
+        for label, selector, source_name in FC_DEVICE_ID_PROBES:
+            frame = send_read_query(
+                ser_obj,
+                receiver=COMM_DEV_FLYCONTROLLER,
+                cmd_set=CMD_SET_GENERAL,
+                cmd_id=CMD_ID_GENERAL_GET_SN,
+                payload=bytes([selector]),
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+                label=label,
+            )
+            if frame is None:
+                print(f"{label}: no matching response ({source_name})")
+            else:
+                responses += 1
+                print(
+                    f"{label}: {describe_common_device_id_payload(frame.payload)} "
+                    f"[{source_name}]"
+                )
 
     print("NOTE: WM163 camera/gimbal ActiveStatus semantics are still being capture-validated; preserve raw -vv output.")
+    print("FC BoardNum/ChipId/ModuleNum/DeviceNum probes are read-only; do not infer pairing from a value alone.")
     print("Do not post real aircraft or module serial numbers publicly.")
     return 0 if responses else 4
 
