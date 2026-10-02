@@ -99,10 +99,13 @@ python mini3_gimbal_cal.py -vv identify --port COM23
 
 The probe currently sends only read requests:
 
-- Flight Controller command set `0x03`, command `0x74` (device info / serial response observed on newer DJI aircraft);
-- General command set `0x00`, command `0x51` (Get Serial Number) to the camera, gimbal, and flight controller, using the one-byte request form found in older DJI app code.
+- Flight Controller command set `0x03`, command `0x74` (device info / aircraft serial response);
+- General command set `0x00`, command `0x32` (ActiveStatus GET) to the camera and gimbal using the GET selectors found in DJI app code;
+- General command set `0x00`, command `0x51` (Get Serial Number) to the flight controller.
 
-WM163 camera/gimbal response semantics are still being validated. The tool prints raw replies rather than claiming that two serials are paired or mismatched. It **does not** write a serial number, key, pairing state, calibration blob, or firmware.
+The first live WM163 capture showed that `0x00/0x51` is useful on the flight controller but returned only `E0` from the camera and no matching gimbal response, so v0.3.0 no longer uses it as the default camera/gimbal identity probe.
+
+WM163 camera/gimbal ActiveStatus response semantics are still being validated. The tool prints raw replies rather than claiming that two serials are paired or mismatched. It **does not** write a serial number, key, pairing state, calibration blob, or firmware.
 
 Do not post real aircraft or module serial numbers publicly. Redact them when sharing logs.
 
