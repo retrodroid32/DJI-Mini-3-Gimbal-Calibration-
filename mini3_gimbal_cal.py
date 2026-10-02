@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -41,6 +41,7 @@ CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
+CMD_ID_CAMERA_GET_SENSOR_ID = 0xB5
 
 PACKET_TYPE_REQUEST = 0
 PACKET_TYPE_RESPONSE = 1
@@ -329,13 +330,42 @@ def describe_ccode_payload(payload: bytes) -> str:
 def describe_gimbal_serial_payload(payload: bytes) -> str:
     """Decode DataGimbalGetSerialParams conservatively.
 
-    DJI app code returns the serial string from response offset 2 onward.
+    DJI app code returns the serial string from response offset 2 onward. On WM163
+    the live response is currently binary, so retain it as a stable-comparison
+    fingerprint rather than pretending it is an ASCII serial number.
     """
     if len(payload) <= 2:
         return describe_ccode_payload(payload)
     serial_text = _ascii_until_nul(payload[2:])
     if serial_text:
         return f"prefix={payload[:2].hex(' ')}, serial={serial_text!r}"
+    fingerprint = payload[2:]
+    return (
+        f"prefix={payload[:2].hex(' ')}, "
+        f"binary_fingerprint={fingerprint.hex()} ({len(fingerprint)} bytes)"
+    )
+
+
+def describe_camera_sensor_id_payload(payload: bytes) -> str:
+    """Decode DataCameraGetSensorID response.
+
+    DJI app code uses byte 0 as sensor type, byte 1 as ID length, then the ID.
+    """
+    if len(payload) < 2:
+        return describe_ccode_payload(payload)
+    sensor_type = payload[0]
+    declared = payload[1]
+    if declared > 0 and len(payload) >= 2 + declared:
+        raw_id = payload[2 : 2 + declared]
+        ascii_id = _ascii_until_nul(raw_id)
+        if ascii_id:
+            return f"sensor_type=0x{sensor_type:02x}, id={ascii_id!r}, len={declared}"
+        return (
+            f"sensor_type=0x{sensor_type:02x}, "
+            f"binary_id={raw_id.hex()} ({declared} bytes)"
+        )
+    if payload and payload[0] in DJI_CCODES:
+        return describe_ccode_payload(payload)
     return f"raw={payload.hex(' ')}"
 
 
@@ -500,6 +530,25 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
             else:
                 responses += 1
                 print(f"{label}: {describe_active_status_payload(frame.payload, version_hint)}")
+
+        # Builder-verified DJI camera identity path used by WM160-family camera
+        # abstractions for the SDK SerialNumber key: CAMERA 0x02/0xB5 with four
+        # zero request bytes. Read-only.
+        frame = send_read_query(
+            ser_obj,
+            receiver=COMM_DEV_CAMERA,
+            cmd_set=2,
+            cmd_id=CMD_ID_CAMERA_GET_SENSOR_ID,
+            payload=b"\x00\x00\x00\x00",
+            timeout_seconds=timeout_seconds,
+            verbose=verbose,
+            label="camera sensor-id",
+        )
+        if frame is None:
+            print("camera sensor-id: no matching response")
+        else:
+            responses += 1
+            print(f"camera sensor-id: {describe_camera_sensor_id_payload(frame.payload)}")
 
         # Exact DJI app implementation: Gimbal/GetSerialParams uses Zenmuse/Gimbal
         # cmd 0x1F with request payload 00 02, and reads the serial from response
