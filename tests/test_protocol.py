@@ -12,6 +12,7 @@ from mini3_gimbal_cal import (
     crc8_header,
     describe_active_status_payload,
     describe_ccode_payload,
+    describe_camera_sensor_id_payload,
     describe_fc_device_info_payload,
     describe_gimbal_serial_payload,
     describe_general_serial_payload,
@@ -113,3 +114,17 @@ def test_describes_gimbal_direct_serial_response():
     desc = describe_gimbal_serial_payload(payload)
     assert "GIMBAL123456" in desc
     assert "prefix=00 00" in desc
+
+
+def test_describes_camera_sensor_id_ascii():
+    payload = b"\x02\x0eCAMERA12345678"
+    desc = describe_camera_sensor_id_payload(payload)
+    assert "sensor_type=0x02" in desc
+    assert "CAMERA12345678" in desc
+
+
+def test_describes_binary_gimbal_fingerprint():
+    payload = bytes.fromhex("00 02 9e fc 71 b0 9f 26 97 40 c4 f8 b4 b7 e9 20 b7")
+    desc = describe_gimbal_serial_payload(payload)
+    assert "binary_fingerprint=9efc71b09f269740c4f8b4b7e920b7" in desc
+    assert "15 bytes" in desc
