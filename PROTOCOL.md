@@ -208,3 +208,20 @@ For WM160-family behavior the request is sent directly to the flight controller.
 A WM163 live capture has already validated selector \`01\`; v0.6.0 adds read-only
 probes for selectors \`02\` through \`04\` as well. Results are treated as
 inventory data only, not proof of camera/gimbal pairing.
+
+
+## Completion-code correction
+
+Review of DJI's decompiled `Ccode` enum corrected an earlier label:
+`0xE3` is `INVALID_PARAM`, not `GET_PARAM_FAILED`. The latter is `0xE7`.
+The WM163 camera/gimbal ActiveStatus captures therefore show that the older
+ActiveStatus request form is rejected as an invalid parameter on this platform.
+
+## Passive capture before probing 0x04/0x68
+
+Modern DJI command maps name GIMBAL `0x04/0x68` as
+`uav_gimbal_cali_data_exist_req/rsp`, which is highly relevant to a persistent
+gimbal-calibration error. However, the available static references do not expose
+a verified request-payload layout. v0.7.0 therefore does not guess a payload.
+Instead, `capture-gimbal` passively records gimbal DUML traffic so the command
+can be observed during normal DJI Fly behavior before any active probe is added.
