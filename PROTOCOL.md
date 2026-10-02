@@ -225,3 +225,27 @@ gimbal-calibration error. However, the available static references do not expose
 a verified request-payload layout. v0.7.0 therefore does not guess a payload.
 Instead, `capture-gimbal` passively records gimbal DUML traffic so the command
 can be observed during normal DJI Fly behavior before any active probe is added.
+
+
+## Historical camera identity from DJI flight records
+
+DJI v13/v14 flight records keep their Details metadata in an AuxiliaryInfo block
+starting at the 100-byte prefix boundary. That block uses DJI's CRC64-derived XOR
+obfuscation but does not require the online AES keychain used for the telemetry
+record stream.
+
+The Details layout used by DJI places, for version >5:
+
+- product type at offset 271
+- aircraft name at 280..311
+- aircraft serial at 312..327
+- camera serial at 328..343
+- RC serial at 344..359
+- battery serial at 360..375
+- app platform at 376
+- app version bytes at 377..379
+
+v0.8.0 adds an offline `flightlog-info` command based on this layout. Historical
+camera identity is treated as evidence of what hardware identity was present at
+the time of the flight; it is not by itself proof of the location or format of
+any later camera/mainboard pairing record.
