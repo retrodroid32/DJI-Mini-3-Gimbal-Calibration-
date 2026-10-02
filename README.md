@@ -155,3 +155,18 @@ returned Sensor ID as the SDK camera `SerialNumber`.
 v0.5.0 adds this exact read-only request to `identify`. It also labels the
 WM163 gimbal `0x04/0x1F` response as a binary fingerprint when the returned
 bytes are not printable ASCII instead of presenting them as an undecoded serial.
+
+
+### v0.5.1 response-decoding correction
+
+The first live `DataCameraGetSensorID` capture exposed an important framing detail:
+the raw DUML payload begins with a one-byte completion code (`ccode`). DJI's own
+`RecvPack` removes that byte before model-specific parsers see the response.
+
+v0.5.1 mirrors that behavior:
+
+- camera Sensor ID: raw `ccode | sensor_type | length | ID...`;
+- gimbal GetSerialParams: raw `ccode | data...`, then the DJI class treats the
+  first two data bytes as a header and the remaining bytes as the serial field.
+
+Device-specific capture values are not used as test fixtures; tests use synthetic data.
