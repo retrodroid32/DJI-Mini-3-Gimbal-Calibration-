@@ -11,6 +11,7 @@ The upstream `o-gs/dji-firmware-tools` service utility supports `JointCoarse` an
 This WM163-focused tool:
 
 - identifies the regular Mini 3 correctly as **WM163**;
+- includes a **read-only identity probe** for aircraft/flight-controller, camera, and gimbal serial-response research after a replacement assembly;
 - sends only gimbal calibration command `0x08` to the gimbal module;
 - accepts and logs the observed one-byte WM163 reply without falsely assigning it a meaning;
 - keeps collecting raw calibration/status packets for protocol research;
@@ -87,6 +88,23 @@ python mini3_gimbal_cal.py -vv linear-hall --port COM3 --yes
 ```
 
 The default serial speed is `9600`, matching upstream service-tool behavior. Override it only if your interface requires a different rate.
+
+## Read-only identity probe
+
+After a replacement camera/gimbal has been mechanically calibrated but DJI Fly still reports errors such as **40011** or **40021**, use the read-only identity probe before attempting any pairing or service-data write:
+
+```text
+python mini3_gimbal_cal.py -vv identify --port COM23
+```
+
+The probe currently sends only read requests:
+
+- Flight Controller command set `0x03`, command `0x74` (device info / serial response observed on newer DJI aircraft);
+- General command set `0x00`, command `0x51` (Get Serial Number) to the camera, gimbal, and flight controller, using the one-byte request form found in older DJI app code.
+
+WM163 camera/gimbal response semantics are still being validated. The tool prints raw replies rather than claiming that two serials are paired or mismatched. It **does not** write a serial number, key, pairing state, calibration blob, or firmware.
+
+Do not post real aircraft or module serial numbers publicly. Redact them when sharing logs.
 
 ## What to capture for WM163 protocol work
 
