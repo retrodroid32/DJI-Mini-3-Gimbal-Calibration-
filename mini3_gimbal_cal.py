@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -328,45 +328,63 @@ def describe_ccode_payload(payload: bytes) -> str:
 
 
 def describe_gimbal_serial_payload(payload: bytes) -> str:
-    """Decode DataGimbalGetSerialParams conservatively.
+    """Decode DataGimbalGetSerialParams using DJI RecvPack semantics.
 
-    DJI app code returns the serial string from response offset 2 onward. On WM163
-    the live response is currently binary, so retain it as a stable-comparison
-    fingerprint rather than pretending it is an ASCII serial number.
+    The first raw response byte is the DUML ccode and is stripped before DJI's
+    DataGimbalGetSerialParams sees _recData. That class then returns bytes from
+    _recData offset 2 onward as the serial field.
     """
-    if len(payload) <= 2:
+    if not payload:
+        return "empty payload"
+    ccode = payload[0]
+    data = payload[1:]
+    if ccode not in (0x00, 0x01):
         return describe_ccode_payload(payload)
-    serial_text = _ascii_until_nul(payload[2:])
+    if len(data) <= 2:
+        return f"ccode=0x{ccode:02x}, data={data.hex(' ')}"
+    header = data[:2]
+    serial_bytes = data[2:]
+    serial_text = _ascii_until_nul(serial_bytes)
     if serial_text:
-        return f"prefix={payload[:2].hex(' ')}, serial={serial_text!r}"
-    fingerprint = payload[2:]
+        return (
+            f"ccode=0x{ccode:02x}, header={header.hex(' ')}, "
+            f"serial={serial_text!r}"
+        )
     return (
-        f"prefix={payload[:2].hex(' ')}, "
-        f"binary_fingerprint={fingerprint.hex()} ({len(fingerprint)} bytes)"
+        f"ccode=0x{ccode:02x}, header={header.hex(' ')}, "
+        f"binary_serial_bytes={serial_bytes.hex()} ({len(serial_bytes)} bytes)"
     )
 
 
 def describe_camera_sensor_id_payload(payload: bytes) -> str:
-    """Decode DataCameraGetSensorID response.
+    """Decode DataCameraGetSensorID using DJI RecvPack semantics.
 
-    DJI app code uses byte 0 as sensor type, byte 1 as ID length, then the ID.
+    DUML response byte 0 is the ccode. DJI RecvPack removes it before the
+    DataCameraGetSensorID parser sees sensor type, ID length, and ID bytes.
     """
-    if len(payload) < 2:
+    if not payload:
+        return "empty payload"
+    ccode = payload[0]
+    data = payload[1:]
+    if ccode not in (0x00, 0x01):
         return describe_ccode_payload(payload)
-    sensor_type = payload[0]
-    declared = payload[1]
-    if declared > 0 and len(payload) >= 2 + declared:
-        raw_id = payload[2 : 2 + declared]
+    if len(data) < 2:
+        return f"ccode=0x{ccode:02x}, data={data.hex(' ')}"
+    sensor_type = data[0]
+    declared = data[1]
+    if declared > 0 and len(data) >= 2 + declared:
+        raw_id = data[2 : 2 + declared]
         ascii_id = _ascii_until_nul(raw_id)
         if ascii_id:
-            return f"sensor_type=0x{sensor_type:02x}, id={ascii_id!r}, len={declared}"
+            return (
+                f"ccode=0x{ccode:02x}, sensor_type=0x{sensor_type:02x}, "
+                f"id={ascii_id!r}, len={declared}"
+            )
         return (
-            f"sensor_type=0x{sensor_type:02x}, "
+            f"ccode=0x{ccode:02x}, sensor_type=0x{sensor_type:02x}, "
             f"binary_id={raw_id.hex()} ({declared} bytes)"
         )
-    if payload and payload[0] in DJI_CCODES:
-        return describe_ccode_payload(payload)
-    return f"raw={payload.hex(' ')}"
+    return f"ccode=0x{ccode:02x}, raw_data={data.hex(' ')}"
 
 
 def describe_active_status_payload(payload: bytes, version_hint: str) -> str:
