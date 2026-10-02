@@ -196,3 +196,7 @@ def test_parses_v14_flightlog_identity_without_api_key(tmp_path):
     assert ident.battery_sn == "SYNTHBAT123456"
     assert ident.app_platform == 6
     assert ident.app_version == "1.14.2"
+
+
+def test_decodes_fd_as_flash_flushing():
+    assert describe_ccode_payload(b"\xfd") == "ccode=0xfd (FLASH_FLUSHING)"
