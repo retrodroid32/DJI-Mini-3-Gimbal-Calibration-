@@ -10,6 +10,8 @@ from mini3_gimbal_cal import (
     build_packet,
     crc16_duML,
     crc8_header,
+    describe_fc_device_info_payload,
+    describe_general_serial_payload,
     describe_payload,
     parse_frame,
 )
@@ -56,3 +58,19 @@ def test_stream_parser_handles_noise_and_split_frames():
     assert len(out) == 2
     assert out[0].seq == 0xD839
     assert out[1].seq == 0x89B5
+
+
+def test_describes_general_serial_length_prefixed_payload():
+    serial_text = b"1581F5FJC254J0"
+    payload = len(serial_text).to_bytes(2, "little") + serial_text
+    desc = describe_general_serial_payload(payload)
+    assert "1581F5FJC254J0" in desc
+    assert "declared_len=14" in desc
+
+
+def test_describes_fc_device_info_payload():
+    payload = b"\x00" + b"1581F5FJC254J0\x00D"
+    desc = describe_fc_device_info_payload(payload)
+    assert "status=0x00" in desc
+    assert "1581F5FJC254J0" in desc
+    assert "extra=44" in desc
