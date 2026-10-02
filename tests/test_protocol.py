@@ -9,6 +9,7 @@ from mini3_gimbal_cal import (
     FrameReader,
     build_packet,
     crc16_duML,
+    crc64_jones,
     crc8_header,
     describe_active_status_payload,
     describe_ccode_payload,
@@ -18,6 +19,7 @@ from mini3_gimbal_cal import (
     describe_gimbal_serial_payload,
     describe_general_serial_payload,
     describe_payload,
+    parse_flightlog_identity,
     parse_frame,
 )
 
@@ -152,3 +154,45 @@ def test_describes_common_fc_identifier_binary():
     desc = describe_common_device_id_payload(payload)
     assert "binary_id=102030405060" in desc
     assert "6 bytes" in desc
+
+
+def _encode_aux_info(decoded: bytes, first: int = 0x42) -> bytes:
+    seed = first
+    key_input = ((0x123456789ABCDEF0 * first) & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little")
+    key = crc64_jones(seed, key_input).to_bytes(8, "little")
+    return bytes([first]) + bytes(decoded[i] ^ key[i % 8] for i in range(len(decoded)))
+
+
+def test_parses_v14_flightlog_identity_without_api_key(tmp_path):
+    info = bytearray(436)
+    info[271] = 112
+    info[280:280 + len(b"DJI Mini 3")] = b"DJI Mini 3"
+    info[312:312 + len(b"SYNTHAIR123456")] = b"SYNTHAIR123456"
+    info[328:328 + len(b"SYNTHCAM123456")] = b"SYNTHCAM123456"
+    info[344:344 + len(b"SYNTHRC1234567")] = b"SYNTHRC1234567"
+    info[360:360 + len(b"SYNTHBAT123456")] = b"SYNTHBAT123456"
+    info[376] = 6
+    info[377:380] = bytes([1, 14, 2])
+
+    decoded = b"\x00" + len(info).to_bytes(2, "little") + bytes(info) + b"\x00\x00"
+    raw_aux = _encode_aux_info(decoded)
+
+    prefix = bytearray(100)
+    prefix[0:8] = (809).to_bytes(8, "little")
+    prefix[8:10] = (436).to_bytes(2, "little")
+    prefix[10] = 14
+
+    blob = bytes(prefix) + b"\x00" + len(raw_aux).to_bytes(2, "little") + raw_aux
+    path = tmp_path / "DJIFlightRecord_synthetic.txt"
+    path.write_bytes(blob)
+
+    ident = parse_flightlog_identity(path)
+    assert ident.version == 14
+    assert ident.product_type == 112
+    assert ident.aircraft_name == "DJI Mini 3"
+    assert ident.aircraft_sn == "SYNTHAIR123456"
+    assert ident.camera_sn == "SYNTHCAM123456"
+    assert ident.rc_sn == "SYNTHRC1234567"
+    assert ident.battery_sn == "SYNTHBAT123456"
+    assert ident.app_platform == 6
+    assert ident.app_version == "1.14.2"
