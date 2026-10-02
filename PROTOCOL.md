@@ -192,3 +192,19 @@ header followed by a 14-byte non-ASCII serial field. The project records that
 field as opaque binary serial bytes until its WM163 encoding is understood.
 
 No device-specific serials or captured identifiers are documented here.
+
+
+## FC component-identifier selectors
+
+DJI's public/decompiled \`DataCommonGetDeviceSerialNumber\` implementation defines
+four one-byte selectors for General/GetSerialNum (\`cmd_set=0x00, cmd_id=0x51\`):
+
+1. \`BoardNum\`
+2. \`ChipId\`
+3. \`ModuleNum\`
+4. \`DeviceNum\`
+
+For WM160-family behavior the request is sent directly to the flight controller.
+A WM163 live capture has already validated selector \`01\`; v0.6.0 adds read-only
+probes for selectors \`02\` through \`04\` as well. Results are treated as
+inventory data only, not proof of camera/gimbal pairing.
