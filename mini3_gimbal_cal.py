@@ -22,19 +22,35 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
 SOF = 0x55
+COMM_DEV_CAMERA = 1
+COMM_DEV_FLYCONTROLLER = 3
 COMM_DEV_GIMBAL = 4
 COMM_DEV_PC = 10
+
+CMD_SET_GENERAL = 0
+CMD_SET_FLYCONTROLLER = 3
 CMD_SET_ZENMUSE = 4
+
+CMD_ID_GENERAL_GET_SN = 0x51
+CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
+
 PACKET_TYPE_REQUEST = 0
 PACKET_TYPE_RESPONSE = 1
 ACK_BEFORE_EXEC = 1
+ACK_AFTER_EXEC = 2
 NO_ENCRYPTION = 0
+
+IDENTITY_TARGETS = (
+    ("camera", COMM_DEV_CAMERA),
+    ("gimbal", COMM_DEV_GIMBAL),
+    ("flight-controller", COMM_DEV_FLYCONTROLLER),
+)
 
 CALIB_COMMANDS = {
     "joint-coarse": 0x01,
@@ -221,6 +237,68 @@ def is_gimbal_calib_frame(frame: DumlFrame) -> bool:
     )
 
 
+def is_reply_to(
+    frame: DumlFrame,
+    *,
+    sender: int,
+    seq: int,
+    cmd_set: int,
+    cmd_id: int,
+) -> bool:
+    return (
+        frame.sender == sender
+        and frame.receiver == COMM_DEV_PC
+        and frame.seq == seq
+        and frame.packet_type == PACKET_TYPE_RESPONSE
+        and frame.cmd_set == cmd_set
+        and frame.cmd_id == cmd_id
+    )
+
+
+def _ascii_until_nul(data: bytes) -> str:
+    raw = data.split(b"\x00", 1)[0]
+    if not raw:
+        return ""
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return ""
+    if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in text):
+        return ""
+    return text
+
+
+def describe_general_serial_payload(payload: bytes) -> str:
+    """Describe a General/Get Serial Number (0x00/0x51) response conservatively.
+
+    Older DJI app code parses this family as a little-endian uint16 length followed
+    by UTF-8 serial text. WM163 behavior is not yet capture-validated, so a failed
+    parse is reported as raw bytes instead of being treated as an error.
+    """
+    if len(payload) >= 2:
+        declared = int.from_bytes(payload[:2], "little")
+        if 0 < declared <= len(payload) - 2:
+            serial_text = _ascii_until_nul(payload[2 : 2 + declared])
+            if serial_text:
+                return f"serial={serial_text!r} (declared_len={declared})"
+    return f"raw={payload.hex(' ')}"
+
+
+def describe_fc_device_info_payload(payload: bytes) -> str:
+    """Describe FC/GetDeviceInfo (0x03/0x74) without assuming WM163 success codes."""
+    if not payload:
+        return "empty payload"
+    status = payload[0]
+    serial_text = _ascii_until_nul(payload[1:])
+    if serial_text:
+        after = payload[1 + len(serial_text) :]
+        if after.startswith(b"\x00"):
+            after = after[1:]
+        suffix = f", extra={after.hex(' ')}" if after else ""
+        return f"status=0x{status:02x}, serial={serial_text!r}{suffix}"
+    return f"status=0x{status:02x}, raw={payload[1:].hex(' ')}"
+
+
 def describe_payload(command_name: str, payload: bytes) -> str:
     if len(payload) == 0:
         return "empty payload"
@@ -250,6 +328,100 @@ def read_frames(ser_obj, reader: FrameReader, deadline: float) -> Iterable[DumlF
             yield from reader.feed(chunk)
         else:
             time.sleep(0.01)
+
+
+def send_read_query(
+    ser_obj,
+    *,
+    receiver: int,
+    cmd_set: int,
+    cmd_id: int,
+    payload: bytes,
+    timeout_seconds: float,
+    verbose: int,
+    label: str,
+) -> Optional[DumlFrame]:
+    seq = next_sequence()
+    packet = build_packet(
+        seq=seq,
+        payload=payload,
+        receiver=receiver,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=cmd_set,
+        cmd_id=cmd_id,
+    )
+
+    if verbose:
+        print(f"{label} TX: {packet.hex(' ')}")
+
+    ser_obj.reset_input_buffer()
+    ser_obj.write(packet)
+    ser_obj.flush()
+
+    reader = FrameReader()
+    deadline = time.monotonic() + timeout_seconds
+    for frame in read_frames(ser_obj, reader, deadline):
+        if verbose > 1:
+            print(f"{label} RX: {frame.hex}")
+        if is_reply_to(frame, sender=receiver, seq=seq, cmd_set=cmd_set, cmd_id=cmd_id):
+            return frame
+    return None
+
+
+def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
+    """Read-only identity/service probe for WM163 repair diagnostics."""
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: read-only identity probe; no serial number, pairing key, or calibration data is written.")
+
+    responses = 0
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        # Confirmed on newer DJI captures: FC cmd-set 0x03 / cmd-id 0x74 returns
+        # a status byte followed by the aircraft/FC serial string and model data.
+        fc_info = send_read_query(
+            ser_obj,
+            receiver=COMM_DEV_FLYCONTROLLER,
+            cmd_set=CMD_SET_FLYCONTROLLER,
+            cmd_id=CMD_ID_FC_GET_DEVICE_INFO,
+            payload=b"",
+            timeout_seconds=timeout_seconds,
+            verbose=verbose,
+            label="FC device-info",
+        )
+        if fc_info is None:
+            print("FC device-info: no matching response")
+        else:
+            responses += 1
+            print(f"FC device-info: {describe_fc_device_info_payload(fc_info.payload)}")
+
+        # General/Get Serial Number is documented as cmd 0x00/0x51. Older DJI app
+        # code sends one-byte payload 0x01 and parses uint16 length + UTF-8 text.
+        # On WM163 this is intentionally a raw/read-only probe until captures
+        # establish which modules implement it and the exact response layout.
+        for target_name, target_id in IDENTITY_TARGETS:
+            frame = send_read_query(
+                ser_obj,
+                receiver=target_id,
+                cmd_set=CMD_SET_GENERAL,
+                cmd_id=CMD_ID_GENERAL_GET_SN,
+                payload=b"\x01",
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+                label=f"{target_name} serial",
+            )
+            if frame is None:
+                print(f"{target_name} serial: no matching response")
+            else:
+                responses += 1
+                print(f"{target_name} serial: {describe_general_serial_payload(frame.payload)}")
+
+    print("NOTE: WM163 camera/gimbal serial response semantics are provisional; preserve raw -vv output.")
+    print("Do not post real aircraft or module serial numbers publicly.")
+    return 0 if responses else 4
 
 
 def run_calibration(port: str, baudrate: int, command_name: str, monitor_seconds: float, verbose: int) -> int:
@@ -365,6 +537,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
             help="required acknowledgement that this is experimental repair software",
         )
 
+    identify = sub.add_parser(
+        "identify",
+        help="read-only WM163 aircraft/camera/gimbal identity probe for post-replacement diagnostics",
+    )
+    identify.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    identify.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    identify.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=2.5,
+        help="per-query response timeout (default: 2.5 seconds)",
+    )
+
     dry = sub.add_parser("dry-run", help="build a known request packet without touching hardware")
     dry.add_argument("command", choices=tuple(CALIB_COMMANDS))
     dry.add_argument("--seq", type=lambda s: int(s, 0), default=0xD839)
@@ -386,6 +571,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "replay":
         return replay_frames(args.command, args.frames)
+
+    if args.action == "identify":
+        return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
 
     if not args.yes:
         parser.error(
