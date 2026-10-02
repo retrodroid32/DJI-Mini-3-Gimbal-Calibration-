@@ -226,3 +226,12 @@ the flight telemetry stream.
 This is useful after a camera/gimbal replacement because an older flight record
 can establish the camera identity that the aircraft used before the repair.
 No device-specific serials are committed to this repository.
+
+
+### v0.8.1 completion-code note
+
+DJI's decompiled `Ccode` enum maps `0xFD` to `FLASH_FLUSHING`
+(`ICameraVideoResolutionRes.VR_MAX` resolves to 253). The WM163 FC `ChipId`
+and `ModuleNum` selector probes returned `0xFD` with zero-filled data, so the
+tool now labels that code correctly instead of `UNKNOWN`. Those selector
+responses are still not treated as useful camera/gimbal pairing evidence.
