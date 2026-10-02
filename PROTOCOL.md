@@ -249,3 +249,12 @@ v0.8.0 adds an offline `flightlog-info` command based on this layout. Historical
 camera identity is treated as evidence of what hardware identity was present at
 the time of the flight; it is not by itself proof of the location or format of
 any later camera/mainboard pairing record.
+
+
+## WM163 selector 0xFD result
+
+The FC `ChipId` and `ModuleNum` selector probes returned raw ccode `0xFD`
+plus zero-filled payloads. In DJI's decompiled `Ccode` enum, `0xFD` is
+`FLASH_FLUSHING`. This is recorded as the protocol result only; it does not
+establish that flash activity is actually occurring, nor does it identify a
+camera/gimbal binding field.
