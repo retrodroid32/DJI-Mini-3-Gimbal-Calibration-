@@ -143,3 +143,15 @@ There is no warranty. A repair-calibration command can move the gimbal unexpecte
 A live WM163 run showed `E3` as the first byte of both camera and gimbal ActiveStatus replies. In DJI app code, `E3` maps to `GET_PARAM_FAILED`, so those replies are now reported as command failures rather than opaque identity data.
 
 v0.4.0 therefore adds the app-verified read-only gimbal serial request `0x04/0x1F` with payload `00 02`. The camera-specific `0x02/0x90` serial-number command is documented in modern DJI command maps, but its request layout has not yet been builder-verified, so this tool does not send it by default.
+
+
+### v0.5.0 camera identity probe
+
+DJI app code contains a second, builder-verified camera identity path:
+`DataCameraGetSensorID` sends CAMERA command set `0x02`, command `0xB5`,
+with payload `00 00 00 00`. DJI's WM160-family camera abstraction uses the
+returned Sensor ID as the SDK camera `SerialNumber`.
+
+v0.5.0 adds this exact read-only request to `identify`. It also labels the
+WM163 gimbal `0x04/0x1F` response as a binary fingerprint when the returned
+bytes are not printable ASCII instead of presenting them as an undecoded serial.
