@@ -68,3 +68,29 @@ The following are intentionally not claimed yet:
 - whether firmware versions change the progress payload format.
 
 Until captures establish these meanings, the tool records the bytes and reports transport acceptance rather than declaring calibration success from the one-byte response alone.
+
+
+## WM163 capture: post-command gimbal state traffic
+
+A live WM163 JointCoarse run on 2026-10-02 confirmed the normal one-byte `0x01`
+acknowledgement and also exposed recurring gimbal-originated Zenmuse `0x30` packets.
+During the capture, two-byte payloads were repeatedly observed as `51 01` and later
+changed to `64 00`.
+
+Those values are recorded as **state observations only**. This project does not yet
+label either pair as progress, pass, fail, or completion because no authoritative
+WM163 field definition has been established.
+
+## Read-only identity research
+
+Two read requests are now implemented by the `identify` command:
+
+- Flight Controller `cmd_set=0x03, cmd_id=0x74`: newer public DJI captures describe
+  the response as status + aircraft/FC serial + model data.
+- General `cmd_set=0x00, cmd_id=0x51`: public DJI protocol maps identify this as
+  Get Serial Number. Older DJI app code sends request payload `01` and parses the
+  response as a little-endian 16-bit string length followed by UTF-8 serial text.
+
+For WM163, camera/gimbal implementation details remain provisional. The command is
+therefore read-only and preserves raw response bytes. No Set Serial Number
+(`0x00/0x50`) or pairing/encryption write is implemented.
