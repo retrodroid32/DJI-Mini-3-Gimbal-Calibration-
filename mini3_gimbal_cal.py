@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -40,6 +40,7 @@ CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
 CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
+CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
 
 PACKET_TYPE_REQUEST = 0
 PACKET_TYPE_RESPONSE = 1
@@ -59,6 +60,20 @@ ACTIVE_STATUS_PROBES = (
     ("camera active-status", COMM_DEV_CAMERA, b"\x01", "v1.0"),
     ("gimbal active-status", COMM_DEV_GIMBAL, b"\x11", "v1.1"),
 )
+
+DJI_CCODES = {
+    0x00: "OK",
+    0x01: "SUCCEED",
+    0xD9: "NOT_SUPPORT_FEATURE",
+    0xE0: "INVALID_CMD",
+    0xE1: "TIMEOUT_REMOTE",
+    0xE2: "OUT_OF_MEMORY",
+    0xE3: "GET_PARAM_FAILED",
+    0xE4: "NOT_SUPPORT_CURRENT_STATE",
+    0xE5: "TIME_NOT_SYNC",
+    0xE6: "SET_PARAM_FAILED",
+    0xE7: "GET_PARAM_FAILED_ALT",
+}
 
 CALIB_COMMANDS = {
     "joint-coarse": 0x01,
@@ -300,6 +315,30 @@ def describe_general_serial_payload(payload: bytes) -> str:
     return f"raw={payload.hex(' ')}"
 
 
+def describe_ccode_payload(payload: bytes) -> str:
+    if not payload:
+        return "empty payload"
+    code = payload[0]
+    name = DJI_CCODES.get(code, "UNKNOWN")
+    suffix = payload[1:]
+    if suffix:
+        return f"ccode=0x{code:02x} ({name}), data={suffix.hex(' ')}"
+    return f"ccode=0x{code:02x} ({name})"
+
+
+def describe_gimbal_serial_payload(payload: bytes) -> str:
+    """Decode DataGimbalGetSerialParams conservatively.
+
+    DJI app code returns the serial string from response offset 2 onward.
+    """
+    if len(payload) <= 2:
+        return describe_ccode_payload(payload)
+    serial_text = _ascii_until_nul(payload[2:])
+    if serial_text:
+        return f"prefix={payload[:2].hex(' ')}, serial={serial_text!r}"
+    return f"raw={payload.hex(' ')}"
+
+
 def describe_active_status_payload(payload: bytes, version_hint: str) -> str:
     """Decode legacy ActiveStatus GET replies conservatively.
 
@@ -318,6 +357,8 @@ def describe_active_status_payload(payload: bytes, version_hint: str) -> str:
         if serial_text:
             return f"active=0x{payload[0]:02x}, serial={serial_text!r}"
 
+    if payload and payload[0] in DJI_CCODES:
+        return describe_ccode_payload(payload)
     return f"raw={payload.hex(' ')}"
 
 
@@ -459,6 +500,25 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
             else:
                 responses += 1
                 print(f"{label}: {describe_active_status_payload(frame.payload, version_hint)}")
+
+        # Exact DJI app implementation: Gimbal/GetSerialParams uses Zenmuse/Gimbal
+        # cmd 0x1F with request payload 00 02, and reads the serial from response
+        # offset 2 onward. This is a read-only query.
+        frame = send_read_query(
+            ser_obj,
+            receiver=COMM_DEV_GIMBAL,
+            cmd_set=CMD_SET_ZENMUSE,
+            cmd_id=CMD_ID_GIMBAL_GET_SERIAL_PARAMS,
+            payload=b"\x00\x02",
+            timeout_seconds=timeout_seconds,
+            verbose=verbose,
+            label="gimbal direct-serial",
+        )
+        if frame is None:
+            print("gimbal direct-serial: no matching response")
+        else:
+            responses += 1
+            print(f"gimbal direct-serial: {describe_gimbal_serial_payload(frame.payload)}")
 
         # Keep General/Get Serial Number for the flight controller only. The first
         # live WM163 capture showed camera=0xE0 and no gimbal reply, while the FC
