@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import pathlib
+import struct
 import sys
 import time
 from typing import Iterable, Optional
@@ -22,9 +24,13 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
+
+DJI_PRODUCT_NAMES = {
+    112: "DJI Mini 3",
+}
 
 SOF = 0x55
 COMM_DEV_CAMERA = 1
@@ -126,6 +132,131 @@ CRC8_TABLE = (
     0xE9,0xB7,0x55,0x0B,0x88,0xD6,0x34,0x6A,0x2B,0x75,0x97,0xC9,0x4A,0x14,0xF6,0xA8,
     0x74,0x2A,0xC8,0x96,0x15,0x4B,0xA9,0xF7,0xB6,0xE8,0x0A,0x54,0xD7,0x89,0x6B,0x35,
 )
+
+
+
+CRC64_JONES_POLY = 0x95AC9329AC4BC9B5
+MASK64 = 0xFFFFFFFFFFFFFFFF
+
+
+def crc64_jones(seed: int, data: bytes) -> int:
+    crc = seed & MASK64
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ CRC64_JONES_POLY if (crc & 1) else (crc >> 1)
+        crc &= MASK64
+    return crc
+
+
+def dji_xor_decode(data: bytes, record_type: int) -> bytes:
+    """DJI flight-record XOR decode used for v13+ auxiliary Info blocks."""
+    if not data:
+        return data
+    first = data[0]
+    seed = (first + record_type) & 0xFF
+    key_input = ((0x123456789ABCDEF0 * first) & MASK64).to_bytes(8, "little")
+    key = crc64_jones(seed, key_input).to_bytes(8, "little")
+    return bytes(data[i + 1] ^ key[i % 8] for i in range(len(data) - 1))
+
+
+@dataclasses.dataclass(frozen=True)
+class FlightLogIdentity:
+    version: int
+    product_type: int
+    aircraft_name: str
+    aircraft_sn: str
+    camera_sn: str
+    rc_sn: str
+    battery_sn: str
+    app_platform: int
+    app_version: str
+
+
+def _fixed_utf8(data: bytes) -> str:
+    return data.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+
+
+def parse_flightlog_identity(path: str | pathlib.Path) -> FlightLogIdentity:
+    """Extract the unencrypted Details identity block from a DJI flight log.
+
+    v13/v14 Details are contained in XOR-obfuscated AuxiliaryInfo. No DJI API key
+    is required for this header metadata.
+    """
+    data = pathlib.Path(path).read_bytes()
+    if len(data) < 100:
+        raise ValueError("file is too small to be a DJI flight record")
+
+    version = data[10]
+    detail_offset_raw = int.from_bytes(data[:8], "little")
+
+    if version >= 13:
+        pos = 100
+        if len(data) < pos + 3:
+            raise ValueError("missing v13+ auxiliary Info block")
+        magic = data[pos]
+        size = int.from_bytes(data[pos + 1 : pos + 3], "little")
+        if magic != 0:
+            raise ValueError(f"expected AuxiliaryInfo magic 0, found {magic}")
+        raw = data[pos + 3 : pos + 3 + size]
+        if len(raw) != size:
+            raise ValueError("truncated AuxiliaryInfo block")
+        decoded = dji_xor_decode(raw, 0)
+        if len(decoded) < 3:
+            raise ValueError("decoded AuxiliaryInfo block is too short")
+        info_len = int.from_bytes(decoded[1:3], "little")
+        info = decoded[3 : 3 + info_len]
+    else:
+        detail_offset = detail_offset_raw if version < 12 else 100
+        info = data[detail_offset : detail_offset + 436]
+
+    if len(info) < 380:
+        raise ValueError("DJI Details block is incomplete")
+
+    if version <= 5:
+        raise ValueError("flightlog-info currently supports DJI log version 6 and newer")
+
+    product_type = info[271]
+    aircraft_name = _fixed_utf8(info[280:312])
+    aircraft_sn = _fixed_utf8(info[312:328])
+    camera_sn = _fixed_utf8(info[328:344])
+    rc_sn = _fixed_utf8(info[344:360])
+    battery_sn = _fixed_utf8(info[360:376])
+    app_platform = info[376]
+    app_version = ".".join(str(v) for v in info[377:380])
+
+    return FlightLogIdentity(
+        version=version,
+        product_type=product_type,
+        aircraft_name=aircraft_name,
+        aircraft_sn=aircraft_sn,
+        camera_sn=camera_sn,
+        rc_sn=rc_sn,
+        battery_sn=battery_sn,
+        app_platform=app_platform,
+        app_version=app_version,
+    )
+
+
+def run_flightlog_info(path: str) -> int:
+    try:
+        ident = parse_flightlog_identity(path)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    product = DJI_PRODUCT_NAMES.get(ident.product_type, f"DJI product type {ident.product_type}")
+    print(f"Flight log: {path}")
+    print(f"Log version: {ident.version}")
+    print(f"Aircraft model: {ident.aircraft_name or product} (product type {ident.product_type})")
+    print(f"Aircraft SN: {ident.aircraft_sn or '(not present)'}")
+    print(f"Camera SN: {ident.camera_sn or '(not present)'}")
+    print(f"RC SN: {ident.rc_sn or '(not present)'}")
+    print(f"Battery SN: {ident.battery_sn or '(not present)'}")
+    print(f"App platform: {ident.app_platform}")
+    print(f"App version: {ident.app_version}")
+    print("NOTE: This command reads only the flight-record header/details metadata.")
+    return 0
 
 
 def crc8_header(data: bytes, seed: int = 0x77) -> int:
@@ -839,6 +970,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
             help="required acknowledgement that this is experimental repair software",
         )
 
+    flightlog = sub.add_parser(
+        "flightlog-info",
+        help="offline extraction of historical aircraft/camera identities from a DJI flight record",
+    )
+    flightlog.add_argument("path", help="path to DJIFlightRecord_*.txt")
+
     identify = sub.add_parser(
         "identify",
         help="read-only WM163 aircraft/camera/gimbal identity probe for post-replacement diagnostics",
@@ -886,6 +1023,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "replay":
         return replay_frames(args.command, args.frames)
+
+    if args.action == "flightlog-info":
+        return run_flightlog_info(args.path)
 
     if args.action == "identify":
         return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
