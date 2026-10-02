@@ -13,6 +13,7 @@ from mini3_gimbal_cal import (
     describe_active_status_payload,
     describe_ccode_payload,
     describe_camera_sensor_id_payload,
+    describe_common_device_id_payload,
     describe_fc_device_info_payload,
     describe_gimbal_serial_payload,
     describe_general_serial_payload,
@@ -110,10 +111,10 @@ def test_decodes_e3_as_get_param_failed():
 
 
 def test_describes_gimbal_direct_serial_response():
-    payload = b"\x00\x00GIMBAL123456\x00"
+    payload = b"\x00\x02\x00GIMBAL123456\x00"
     desc = describe_gimbal_serial_payload(payload)
     assert "GIMBAL123456" in desc
-    assert "prefix=00 00" in desc
+    assert "header=02 00" in desc
 
 
 def test_describes_camera_sensor_id_ascii():
@@ -133,3 +134,21 @@ def test_describes_binary_gimbal_serial_bytes():
     assert "header=02 aa" in desc
     assert "binary_serial_bytes=102030405060708090a0b0c0d0e0" in desc
     assert "14 bytes" in desc
+
+
+def test_describes_common_fc_identifier_ascii():
+    ident = b"SYNTHBOARD1234"
+    payload = b"\x00" + len(ident).to_bytes(2, "little") + ident + b"\x00\xf9"
+    desc = describe_common_device_id_payload(payload)
+    assert "ccode=0x00" in desc
+    assert "SYNTHBOARD1234" in desc
+    assert "declared_len=14" in desc
+    assert "extra=00 f9" in desc
+
+
+def test_describes_common_fc_identifier_binary():
+    ident = bytes.fromhex("10 20 30 40 50 60")
+    payload = b"\x00" + len(ident).to_bytes(2, "little") + ident
+    desc = describe_common_device_id_payload(payload)
+    assert "binary_id=102030405060" in desc
+    assert "6 bytes" in desc
