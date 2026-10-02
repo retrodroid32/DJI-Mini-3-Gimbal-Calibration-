@@ -121,3 +121,30 @@ Because older DJI app code obtains camera/gimbal identity through General Active
 
 No ActiveStatus SET, serial-number write, encryption/pairing write, or calibration-data
 write is implemented.
+
+
+## 2026-10-02 ActiveStatus result
+
+A second live WM163 capture returned `E3` for both camera and gimbal ActiveStatus
+GET requests. DJI app `Ccode` maps decimal 227 / `0xE3` to
+`GET_PARAM_FAILED`. Therefore these ActiveStatus replies are failures, not serial
+or pairing data.
+
+The same capture again returned the correct aircraft/FC serial from both FC
+device-info and General/Get Serial Number.
+
+### App-verified gimbal serial query
+
+Decompiled DJI app code contains `DataGimbalGetSerialParams`:
+
+- receiver: GIMBAL (4)
+- command set: GIMBAL / Zenmuse (4)
+- command ID: `0x1F`
+- request payload: `00 02`
+- response serial: bytes starting at response offset 2
+
+v0.4.0 adds this exact read-only request to `identify`.
+
+Modern command maps also name camera command `0x02/0x90` as
+`uav_camera_serial_number_req`, but the request payload layout is not
+builder-verified in the available app source, so it is not sent automatically.
