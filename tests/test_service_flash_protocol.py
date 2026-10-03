@@ -77,3 +77,33 @@ def test_recovered_commit_hold_probe_exact():
 def test_chunk_limit_is_980():
     session_a_stream_payload(0, b"x" * CHUNK)
     session_b_file_data_payload(0, b"x" * CHUNK)
+
+
+def test_gray_order_matches_recovered_logic():
+    from wm163_service_flash_protocol import gray_order
+
+    files = [
+        "wm163_1100_x.sig",
+        "wm163_0306_x.sig",
+        "wm163.cfg.sig",
+        "wm163_0100_x.sig",
+        "wm163_1200_x.sig",
+        "wm163_0905_x.sig",
+        "wm163_0105_x.sig",
+    ]
+    assert gray_order(files) == [
+        "wm163.cfg.sig",
+        "wm163_0100_x.sig",
+        "wm163_0105_x.sig",
+        "wm163_0306_x.sig",
+        "wm163_0905_x.sig",
+        "wm163_1100_x.sig",
+        "wm163_1200_x.sig",
+    ]
+
+
+def test_gray_order_non_module_names_sort_before_module_names_stably():
+    from wm163_service_flash_protocol import gray_order
+
+    files = ["z.cfg", "wm163_0306_x.sig", "a.cfg", "wm163_0100_x.sig"]
+    assert gray_order(files) == ["z.cfg", "a.cfg", "wm163_0100_x.sig", "wm163_0306_x.sig"]
