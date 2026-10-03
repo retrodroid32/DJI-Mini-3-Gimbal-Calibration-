@@ -273,3 +273,34 @@ is accepted and that status arrives as GIMBAL `0x04/0x30`. DJI's own
 The observed WM163 run ended with `64 00`: decimal progress 100 and status 0,
 which is an explicit successful Auto Calibration result. v0.10.0 decodes and
 prints that result directly.
+
+
+### v0.11.0 direct gimbal diagnostic decoding
+
+The WM163 Auto Calibration capture exposed a recurring gimbal
+General/GetPushCheckStatus packet:
+
+```text
+0x00/0xF1 payload 80 00 00 01
+```
+
+DJI's `DataGimbalGetPushCheckStatus` reads this as a little-endian 32-bit
+bitfield. That payload is `0x01000080`, which has exactly bits 7 and 24 set.
+
+DJI's own diagnostic mapping assigns:
+
+- bit 7 -> `IMU_DATA_DISMATCH` -> diagnostic code **40021**
+- bit 24 -> `CALIBRATE_ERROR` / whole-gimbal calibration error -> diagnostic code **40011**
+
+This means the aircraft is actively reporting both fault bits even when normal
+Auto Calibration reaches 100% / success. The errors are therefore not merely
+stale DJI Fly UI messages.
+
+v0.11.0 adds a passive decoder:
+
+```text
+python mini3_gimbal_cal.py -v diagnose-gimbal --port COM23 --seconds 5
+```
+
+It sends no DUML command and only decodes the gimbal's recurring `0x00/0xF1`
+status push.
