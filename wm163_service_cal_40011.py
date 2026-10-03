@@ -21,6 +21,76 @@ import mini3_gimbal_cal as m
 # recovered and covered by offline tests.
 KEEPALIVE_IMPLEMENTATION_READY = False
 
+# Independently recovered from core.calib_engine.cp314-win_amd64.pyd.
+#
+# AirForge FLYC keepalive builder:
+#   encode(0x00, 0x01, b"",
+#          target=(3, 0), sender=(10, 1),
+#          seq=0x3896, ack=2)
+#
+# Gimbal keepalive builder:
+#   encode(0x04, 0x12, payload,
+#          target=(4, 0), sender=sender,
+#          seq=0x1249, ack=2)
+#
+# core.model_catalog names the following dedicated value
+# GIMBAL_KEEPALIVE_MINI3 and its WM163 evidence text records the
+# service-FW 01+02+keepalive validation run.  Keep live use disabled until
+# the remaining CalibEngine sender/timing orchestration is fully reproduced.
+AIRFORGE_FLYC_KEEPALIVE_SEQ = 0x3896
+AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS = 2000
+AIRFORGE_FLYC_KEEPALIVE_TARGET = (m.COMM_DEV_FLYCONTROLLER, 0)
+AIRFORGE_FLYC_KEEPALIVE_SENDER = (m.COMM_DEV_PC, 1)
+
+GIMBAL_KEEPALIVE_SEQ = 0x1249
+GIMBAL_KEEPALIVE_INTERVAL_MS = 3000
+GIMBAL_KEEPALIVE_TARGET = (m.COMM_DEV_GIMBAL, 0)
+GIMBAL_KEEPALIVE_DEFAULT_SENDER = (m.COMM_DEV_PC, 0)
+GIMBAL_KEEPALIVE_MINI3 = bytes.fromhex(
+    "e6 01 43 00 00 00 00 00 00 00 00 08"
+)
+
+
+def build_airforge_flyc_keepalive_packet() -> bytes:
+    """Offline reconstruction of core.calib_engine AirForge FLYC keepalive."""
+    receiver, receiver_index = AIRFORGE_FLYC_KEEPALIVE_TARGET
+    sender, sender_index = AIRFORGE_FLYC_KEEPALIVE_SENDER
+    return m.build_packet(
+        seq=AIRFORGE_FLYC_KEEPALIVE_SEQ,
+        payload=b"",
+        sender=sender,
+        sender_index=sender_index,
+        receiver=receiver,
+        receiver_index=receiver_index,
+        ack_type=m.ACK_AFTER_EXEC,
+        cmd_set=m.CMD_SET_GENERAL,
+        cmd_id=0x01,
+    )
+
+
+def build_mini3_gimbal_keepalive_packet(
+    *,
+    sender: tuple[int, int] = GIMBAL_KEEPALIVE_DEFAULT_SENDER,
+    seq: int = GIMBAL_KEEPALIVE_SEQ,
+) -> bytes:
+    """Offline reconstruction of the Mini-3 0x04/0x12 keepalive builder.
+
+    This helper only builds bytes.  It never opens a serial port or transmits.
+    """
+    sender_dev, sender_index = sender
+    receiver, receiver_index = GIMBAL_KEEPALIVE_TARGET
+    return m.build_packet(
+        seq=seq,
+        payload=GIMBAL_KEEPALIVE_MINI3,
+        sender=sender_dev,
+        sender_index=sender_index,
+        receiver=receiver,
+        receiver_index=receiver_index,
+        ack_type=m.ACK_AFTER_EXEC,
+        cmd_set=m.CMD_SET_ZENMUSE,
+        cmd_id=0x12,
+    )
+
 
 def send_stage(ser_obj, reader: m.FrameReader, name: str, payload: bytes,
                timeout: float, verbose: int) -> bool:
