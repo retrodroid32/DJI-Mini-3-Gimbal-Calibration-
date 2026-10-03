@@ -38,3 +38,30 @@ def test_40011_runner_remains_interlocked_without_keepalive_orchestration():
 def test_recovered_keepalive_intervals():
     assert m.AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS == 2000
     assert m.WM163_GIMBAL_KEEPALIVE_INTERVAL_MS == 3000
+
+
+def test_recovered_keepalive_scheduler_due_edges():
+    assert m.service_keepalives_due(
+        1999, last_flyc_ms=0, last_gimbal_ms=0
+    ) == (False, False)
+
+    assert m.service_keepalives_due(
+        2000, last_flyc_ms=0, last_gimbal_ms=0
+    ) == (True, False)
+
+    assert m.service_keepalives_due(
+        3000, last_flyc_ms=2000, last_gimbal_ms=0
+    ) == (False, True)
+
+    assert m.service_keepalives_due(
+        4000, last_flyc_ms=2000, last_gimbal_ms=3000
+    ) == (True, False)
+
+
+def test_recovered_gimbal_keepalive_can_be_disabled_by_missing_payload():
+    assert m.service_keepalives_due(
+        6000,
+        last_flyc_ms=6000,
+        last_gimbal_ms=0,
+        gimbal_payload=None,
+    ) == (False, False)
