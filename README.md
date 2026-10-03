@@ -256,3 +256,20 @@ The request is GIMBAL `0x04/0x08` with an **empty payload**. It is intentionally
 different from the older service-tool variants that reuse `0x04/0x08` with
 payload `01` (JointCoarse) or `02` (LinearHall). This command does not send
 `0x04/0x68` and does not write serial/pairing data.
+
+
+### v0.10.0 auto-calibration status decoding
+
+The first WM163 PC-only Auto Calibration capture confirmed the normal DJI command
+is accepted and that status arrives as GIMBAL `0x04/0x30`. DJI's own
+`DataGimbalGetPushAutoCalibrationStatus` parser defines:
+
+- response byte 0 = calibration progress
+- response byte 1 = status
+- status `1` = calibrating
+- status `0` = successful
+- other status values = failure/other
+
+The observed WM163 run ended with `64 00`: decimal progress 100 and status 0,
+which is an explicit successful Auto Calibration result. v0.10.0 decodes and
+prints that result directly.
