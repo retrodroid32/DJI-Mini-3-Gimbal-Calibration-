@@ -1783,3 +1783,132 @@ seq = (seq + 1) & 0xFFFF
 after each successful write.
 
 This correction removes the initial Session-B sequence seed as an unknown and explains why assuming a conventional zero seed would have produced a non-faithful implementation. Do not use the superseded zero-default note.
+
+
+## Session-B phase sequence is one shared counter — 2026-10-03
+
+Static tracing of the native `Flasher.session_b()` body now resolves the remaining phase-edge sequence question. The earlier wording that left open whether control records and file records might use separate sequence state is superseded by this section.
+
+The wrapper default remains:
+
+```text
+seq0 = 0x3022
+```
+
+The native body initializes its working sequence from that value and uses the same Python-integer state through the complete Session-B transaction.
+
+### B/ENTER consumes seq0
+
+The first Session-B control call is constructed with:
+
+```text
+cmd_id  = 0x07
+payload = 9 zero bytes
+dst     = 0x01
+seq     = current sequence
+label   = B/ENTER
+```
+
+At this point:
+
+```text
+current sequence = 0x3022
+```
+
+Immediately after the control call returns successfully, the native code performs the already recovered operation:
+
+```python
+seq = (seq + 1) & 0xFFFF
+```
+
+Therefore:
+
+```text
+B/ENTER seq = 0x3022
+next seq    = 0x3023
+```
+
+### B/REPORT_SIZE consumes the next value
+
+The next control vector contains integer-table index 6 = `0x08`, the recovered Session-B size descriptor, destination `0x01`, and the saved sequence produced by the previous increment.
+
+Therefore:
+
+```text
+B/REPORT_SIZE seq = 0x3023
+next seq          = 0x3024
+```
+
+The code again performs `(seq + 1) & 0xFFFF` immediately after a successful call.
+
+### START / DATA / END share the same counter
+
+The three native `0x2A` construction sites correspond to the already recovered Session-B record phases:
+
+```text
+START  type 0x01
+DATA   type 0x02
+END    type 0x03
+```
+
+Each site receives the current saved sequence object. After a successful send/write path, the same modulo-16-bit increment operation updates that saved sequence before the next record.
+
+Thus there is no separate sequence namespace for control packets versus loader file records. Conceptually:
+
+```python
+seq = 0x3022
+
+send B/ENTER(seq)
+seq = (seq + 1) & 0xffff
+
+send B/REPORT_SIZE(seq)
+seq = (seq + 1) & 0xffff
+
+for each file:
+    send START(seq)
+    seq = (seq + 1) & 0xffff
+
+    for each DATA record:
+        send DATA(seq)
+        seq = (seq + 1) & 0xffff
+
+    send END(seq)
+    seq = (seq + 1) & 0xffff
+```
+
+The existing 64-record drain cadence applies to the pipelined 0x2A record stream; it does not reset the sequence.
+
+### B/FINALIZE uses the sequence left by the stream
+
+Near the end of the native function, the final control vector contains:
+
+```text
+cmd_id  = 0x0A
+payload = 17 zero bytes
+dst     = 0x01
+seq     = current saved sequence
+label   = B/FINALIZE
+```
+
+The sequence object passed to B/FINALIZE is the same saved state produced by the file-transfer loop. There is no reset to `seq0` before finalization.
+
+The exact Session-B ordering is therefore now:
+
+```text
+seq=0x3022
+B/ENTER
+  increment
+B/REPORT_SIZE
+  increment
+for each gray_order file:
+  START
+    increment
+  DATA x N
+    increment after each record
+  END
+    increment
+B/FINALIZE using resulting seq
+post-finalize _hold_for_commit()
+```
+
+This also supersedes the older note suggesting START/END might follow a materially different sequence-control path from DATA. Their payload construction paths differ, but all three consume the same Session-B sequence state.
