@@ -107,3 +107,30 @@ def test_gray_order_non_module_names_sort_before_module_names_stably():
 
     files = ["z.cfg", "wm163_0306_x.sig", "a.cfg", "wm163_0100_x.sig"]
     assert gray_order(files) == ["z.cfg", "a.cfg", "wm163_0100_x.sig", "wm163_0306_x.sig"]
+
+
+def test_session_b_total_size_counts_only_transferred_blob_bytes():
+    from wm163_service_flash_protocol import session_b_total_size
+
+    files = [
+        ("wm163.cfg.sig", b"x" * 5),
+        ("wm163_0100_test.pro.fw.sig", b"y" * 7),
+    ]
+    assert session_b_total_size(files) == 12
+
+
+def test_known_v30_session_b_total_size():
+    from wm163_service_flash_protocol import session_b_total_size
+
+    # Signed member sizes from the validated WM163 V30.00.0100 archive:
+    # cfg + 0100 + 0105 + 0306 + 0905 + 1100 + 1200.
+    files = [
+        ("wm163.cfg.sig", b"x" * 2336),
+        ("0100", b"x" * 39459264),
+        ("0105", b"x" * 245824),
+        ("0306", b"x" * 1760032),
+        ("0905", b"x" * 10390912),
+        ("1100", b"x" * 94720),
+        ("1200", b"x" * 56352),
+    ]
+    assert session_b_total_size(files) == 52009440
