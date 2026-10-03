@@ -137,3 +137,12 @@ def gray_order(files):
         return (0, 0)
 
     return sorted(files, key=key)
+
+
+def session_b_total_size(files):
+    """Recovered DrGrey Session-B total_size calculation.
+
+    files is the sequence of (filename, blob) pairs actually transferred.
+    Protocol/name overhead and tar metadata are not counted.
+    """
+    return sum(len(blob) for _name, blob in files)
