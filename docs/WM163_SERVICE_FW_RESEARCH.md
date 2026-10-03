@@ -3146,3 +3146,121 @@ The reported aircraft-level `formal` value is the value intended for
 
 This closes the previous need to guess the public version from module
 Version-Inquiry values. Live service flashing remains disabled.
+
+
+## Service-calibration keepalives independently recovered — 2026-10-03
+
+This recovery was performed from the compiled DrGrey 1.5.2 Cython modules
+`core.calib_engine` and `core.model_catalog`; it does not depend on a
+firmware-package upload.
+
+### AirForge FLYC keepalive
+
+The native method table maps:
+
+```text
+airforge_flyc_keepalive_packet -> 0x180001030
+```
+
+Reconstructing the Cython string/object table, integer table, tuple constants
+and the encoder vectorcall proves the builder is equivalent to:
+
+```python
+encode(
+    0x00,
+    0x01,
+    b"",
+    target=(3, 0),     # FLYC.0
+    sender=(10, 1),    # PC.1
+    seq=0x3896,
+    ack=2,
+)
+```
+
+The exported interval constant is:
+
+```text
+AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS = 2000
+```
+
+Therefore the exact recovered FLYC service keepalive is General `00/01`,
+empty payload, FLYC.0 target, PC.1 sender, fixed sequence `0x3896`, ACK mode
+2, at the recovered 2-second cadence.
+
+### Gimbal keepalive builder
+
+The method table maps:
+
+```text
+gimbal_keepalive_packet -> 0x180001330
+CalibEngine._calib_sender -> native body around 0x18000496c
+CalibEngine._gimbal_keepalive -> native body around 0x180004cf0
+```
+
+The packet builder is equivalent to:
+
+```python
+encode(
+    0x04,
+    0x12,
+    payload,
+    target=(4, 0),     # GIMBAL.0
+    sender=sender,
+    seq=0x1249,
+    ack=2,
+)
+```
+
+and the exported cadence is:
+
+```text
+GIMBAL_KEEPALIVE_INTERVAL_MS = 3000
+GIMBAL_KEEPALIVE_SEQ = 0x1249
+```
+
+`CalibEngine._calib_sender()` independently resolves the sender used by the
+engine. It reads:
+
+```python
+self.prof.calib_sender
+```
+
+with recovered fallback:
+
+```python
+(10, 0)   # PC.0
+```
+
+`_gimbal_keepalive(payload)` obtains that calibration sender and passes it to
+`gimbal_keepalive_packet`.
+
+### Mini 3 payload
+
+The separately recovered `core.model_catalog` constant table contains the
+dedicated symbol:
+
+```text
+GIMBAL_KEEPALIVE_MINI3
+```
+
+and its byte-source hex literal:
+
+```text
+e60143000000000000000008
+```
+
+which decodes to:
+
+```text
+E6 01 43 00 00 00 00 00 00 00 00 08
+```
+
+The same model catalog contains the WM163 bench-evidence record stating that,
+with service firmware loaded, the advanced `01 + 02 + keepalive` sequence ran
+and the gimbal validated, with `00/F1` transitioning to `00000000`.
+
+The offline WM163 40011 helper now records these packet builders and constants,
+but `KEEPALIVE_IMPLEMENTATION_READY` deliberately remains `False`. No live
+service-calibration traffic was enabled by this recovery. The remaining task is
+to reproduce the exact CalibEngine scheduling/lifetime rules around when the
+two keepalives start, overlap the Joint Coarse/Linear Hall stages, and stop.
