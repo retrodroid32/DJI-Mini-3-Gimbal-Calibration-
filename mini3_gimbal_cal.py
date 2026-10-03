@@ -43,6 +43,7 @@ CMD_SET_GENERAL = 0
 CMD_SET_FLYCONTROLLER = 3
 CMD_SET_ZENMUSE = 4
 
+CMD_ID_GENERAL_KEEPALIVE = 0x01
 CMD_ID_GENERAL_REBOOT = 0x0B
 CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
 CMD_ID_GENERAL_GET_CFG_FILE = 0x4F
@@ -50,6 +51,7 @@ CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_GENERAL_PUSH_CHECK_STATUS = 0xF1
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
+CMD_ID_GIMBAL_KEEPALIVE = 0x12
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
 CMD_ID_GIMBAL_AUTO_CAL_STATUS = 0x30
 CMD_ID_GIMBAL_WRITE_IMU = 0x36
@@ -113,6 +115,14 @@ CALIB_COMMANDS = {
     "joint-coarse": 0x01,
     "linear-hall": 0x02,
 }
+
+
+# Recovered DrGrey WM163 service-calibration keepalives.
+# Protocol-only: live 40011 remains separately interlocked.
+AIRFORGE_FLYC_KEEPALIVE_SEQ = 0x3896
+WM163_GIMBAL_KEEPALIVE_PAYLOAD = bytes.fromhex(
+    "e60143000000000000000008"
+)
 
 # Recovered from DrGrey 1.5.2 static constants. Its embedded documentation
 # identifies this exact four-byte form as bank-confirmed on WM163 with active
@@ -329,6 +339,36 @@ def build_packet(
     out += payload
     out += crc16_duML(bytes(out)).to_bytes(2, "little")
     return bytes(out)
+
+
+def build_airforge_flyc_keepalive_packet() -> bytes:
+    """Exact recovered AirForge FLYC keepalive used by DrGrey."""
+    return build_packet(
+        seq=AIRFORGE_FLYC_KEEPALIVE_SEQ,
+        payload=b"",
+        sender=COMM_DEV_PC,
+        sender_index=1,
+        receiver=COMM_DEV_FLYCONTROLLER,
+        receiver_index=0,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=CMD_ID_GENERAL_KEEPALIVE,
+    )
+
+
+def build_wm163_gimbal_keepalive_packet(seq: int) -> bytes:
+    """Recovered WM163 GIMBAL 0x04/0x12 keepalive; sequence kept explicit."""
+    return build_packet(
+        seq=seq,
+        payload=WM163_GIMBAL_KEEPALIVE_PAYLOAD,
+        sender=COMM_DEV_PC,
+        sender_index=0,
+        receiver=COMM_DEV_GIMBAL,
+        receiver_index=0,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_KEEPALIVE,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
