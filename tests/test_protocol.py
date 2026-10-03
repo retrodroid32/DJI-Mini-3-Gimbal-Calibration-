@@ -362,3 +362,32 @@ def test_describes_general_version_inquiry_payload():
     assert "loader=0x01020304" in desc
     assert "app=0x05060708" in desc
     assert "extra=aa bb" in desc
+
+
+def test_builds_recovered_wm163_commit_hold_poll_packet():
+    # Recovered directly from DrGrey mini3_service_flash._hold_for_commit:
+    # HOST=0x2A, dst=0x28, seq=0, FLAG_REQ_ACK=0x40,
+    # CMDSET=0, CMDID=1, empty payload.
+    pkt = build_packet(
+        seq=0,
+        payload=b"",
+        sender=10,
+        sender_index=1,
+        receiver=8,
+        receiver_index=1,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=0x01,
+    )
+    assert pkt == bytes.fromhex("55 0d 04 33 2a 28 00 00 40 00 01 f1 fd")
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.sender_index == 1
+    assert frame.receiver == 8
+    assert frame.receiver_index == 1
+    assert frame.seq == 0
+    assert frame.packet_type == 0
+    assert frame.ack_type == ACK_AFTER_EXEC
+    assert frame.cmd_set == 0x00
+    assert frame.cmd_id == 0x01
+    assert frame.payload == b""
