@@ -92,9 +92,9 @@ Recovered DrGrey labels include:
 
 This strongly supports that DrGrey wraps DJI's normal GENERAL firmware-update family, but the exact payload structures are not yet fully recovered.
 
-### Lockstep transfer
+### Transport behavior — corrected
 
-Recovered messages show that streaming is ACK-gated. DrGrey aborts if a chunk is not acknowledged rather than advancing the stream.
+Session A uses the recovered blocking/ACK-oriented control and stream helpers. Session B's custom `0x2A` file records do **not** block on a matching ACK for every record: they are written through the pipelined transport path, advance one shared 16-bit sequence counter, service receives with `drain(15)` every 64 records, and perform `drain(300)` when the streaming iterator is exhausted. The later sections contain the exact recovered behavior and supersede older lockstep wording.
 
 ### 40011 service-calibration path
 
@@ -652,7 +652,7 @@ END:
 + MD5(file_bytes).digest()
 ```
 
-The exact in-flight window, ACK collection, timeout and abort semantics for DATA records remain under active reconstruction and are intentionally not asserted yet.
+The recovered Session-B stream is pipelined: START/DATA/END records share one evolving sequence counter, the receive side is serviced every 64 records with `drain(15)`, and iterator exhaustion triggers `drain(300)`. There is no per-record blocking `xfer()` gate for these custom `0x2A` records. Exact exception propagation on a failed low-level write/drain remains under reconstruction.
 
 
 ## Candidate WM163 service package supplied 2026-10-03
