@@ -59,3 +59,13 @@ def test_live_service_keepalives_remain_blocked():
     # Exact packet builders are now recovered, but the live runner stays gated
     # until CalibEngine's orchestration/sender selection is fully reconstructed.
     assert KEEPALIVE_IMPLEMENTATION_READY is False
+
+
+def test_recovered_keepalive_wire_vectors():
+    assert build_airforge_flyc_keepalive_packet() == bytes.fromhex(
+        "55 0d 04 33 2a 03 96 38 40 00 01 13 f9"
+    )
+    assert build_mini3_gimbal_keepalive_packet() == bytes.fromhex(
+        "55 19 04 e4 0a 04 49 12 40 04 12 "
+        "e6 01 43 00 00 00 00 00 00 00 00 08 76 e2"
+    )
