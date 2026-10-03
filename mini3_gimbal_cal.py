@@ -374,6 +374,32 @@ def build_wm163_gimbal_keepalive_packet(seq: int = WM163_GIMBAL_KEEPALIVE_SEQ) -
     )
 
 
+def service_keepalives_due(
+    elapsed_ms: int,
+    *,
+    last_flyc_ms: int,
+    last_gimbal_ms: int,
+    flyc_enabled: bool = True,
+    gimbal_payload: bytes | None = WM163_GIMBAL_KEEPALIVE_PAYLOAD,
+) -> tuple[bool, bool]:
+    """Recovered DrGrey monitor cadence decision, transport-free.
+
+    The monitor sends the AirForge FLYC keepalive when at least 2000 ms have
+    elapsed since the previous FLYC keepalive and sends the Mini-3 gimbal
+    0x04/0x12 keepalive when at least 3000 ms have elapsed since the previous
+    gimbal keepalive.  A missing/empty gimbal payload disables that side.
+    """
+    flyc_due = bool(
+        flyc_enabled
+        and elapsed_ms - last_flyc_ms >= AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS
+    )
+    gimbal_due = bool(
+        gimbal_payload
+        and elapsed_ms - last_gimbal_ms >= WM163_GIMBAL_KEEPALIVE_INTERVAL_MS
+    )
+    return flyc_due, gimbal_due
+
+
 @dataclasses.dataclass(frozen=True)
 class DumlFrame:
     raw: bytes
