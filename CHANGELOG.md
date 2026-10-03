@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1
+
+- Disabled the live `fix-imu-40021-short` write path.
+- Newer DrGrey recovery evidence shows the short fix is wrapped in factory/service-state handling.
+- Exact `_read_factory_state` / `_set_factory` wire transactions are not yet verified.
+- Retained `dry-run-40021` for packet inspection only.
+
+
 ## 0.12.0
 
 - Added a fail-closed, WM163-only short repair path for active gimbal diagnostic 40021.
