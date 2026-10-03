@@ -2524,3 +2524,58 @@ Session-B 0x2A call site
 ```
 
 The recovered implementation relies on normal completion/exception behavior rather than checking the numeric return from `serial.write`. A guarded replacement may choose to enforce a stricter full-write invariant, but doing so would be an intentional safety hardening rather than an exact reproduction of this DrGrey behavior.
+
+
+## EngineTransport.xfer no-response semantics recovered — 2026-10-03
+
+Static tracing of `EngineTransport.xfer()` resolves the distinction between an ordinary no-response window and a transport exception for the actual Mini-3 serial path.
+
+The Python-visible signature is:
+
+```python
+EngineTransport.xfer(self, pkt, timeout_ms=4000)
+```
+
+The native body first obtains `self.tp` and checks whether that transport exposes `send_like_gray_flasher`. `SerialTransport` does expose that method, so this is the active branch for the WM163 serial workflow.
+
+On that branch, `xfer()` invokes the equivalent of:
+
+```python
+parts = tp.send_like_gray_flasher(
+    pkt,
+    wait_response=True,
+    window_ms=timeout_ms,
+)
+```
+
+The recovered keyword-name objects at this call site are exactly `wait_response` and `window_ms`; the first value is Python `True`, and the second is the caller's `timeout_ms` object.
+
+After the transport call returns, `EngineTransport.xfer()` performs a truth test on the returned object. Its behavior is:
+
+```python
+if parts:
+    return b"".join(parts)
+return b""
+```
+
+Thus an empty/no-response collection is a normal result represented by `b""`. It is not converted into a timeout exception by `EngineTransport.xfer()` itself.
+
+If the underlying `send_like_gray_flasher` Python call raises/returns NULL, the exception propagates through `xfer()` instead of being converted into `b""`.
+
+`xfer()` also contains a compatibility fallback for transport objects that do not expose `send_like_gray_flasher`: that branch invokes `send_recv(pkt, timeout_ms=timeout_ms)`. The WM163 serial transport uses the preferred `send_like_gray_flasher` branch, so the fallback does not define the normal Mini-3 behavior.
+
+This explains the two recovered callers cleanly:
+
+```text
+Session-B loader-ready polling:
+    xfer(... default 4000 ms)
+    no response -> b"" -> combine with drain(200) -> no UAV marker -> retry
+    transport exception -> abort Session B
+
+Post-finalize hold:
+    xfer(... timeout 500 ms)
+    no response -> normal empty result; hold logic does not inspect payload
+    transport exception/link loss -> exception path associated with reboot transition
+```
+
+So `b""` and an exception are distinct states in the recovered transport stack; a faithful implementation must not treat an ordinary empty response window as an automatic hard failure during loader polling.
