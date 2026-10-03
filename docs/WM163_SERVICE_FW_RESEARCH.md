@@ -1175,3 +1175,109 @@ reply payload success test     NONE in hold loop
 ```
 
 The remaining work before a complete live flasher is now concentrated in reproducing the complete Session-A/Session-B sequencing, ACK/error behavior, and transition into/out of this recovered hold loop—not in discovering another hidden commit-success packet.
+
+
+## Session-B streaming window and sequence behavior recovered — 2026-10-03
+
+Direct reconstruction of the common `0x2A` send block inside WM163 `Flasher.session_b()` resolves an important earlier uncertainty: component records are **not** transferred with a blocking `xfer()/ACK` transaction for every record.
+
+### Common 0x2A send path
+
+For the Session-B custom file protocol, DrGrey constructs:
+
+```python
+encode(
+    0x2A,
+    record_payload,
+    dst=<session_b_destination>,
+    seq=current_seq,
+    flags=FLAG_REQ_ACK,   # 0x40
+    cmd_set=0x00,
+)
+```
+
+and sends the encoded frame through the transport's non-blocking/write path.
+
+The previously recovered record payload forms remain:
+
+```text
+START: 01 + size + filename metadata
+DATA:  02 + 24-bit offset + 00 + chunk
+END:   03 + MD5(file)
+```
+
+### Sequence advancement
+
+Immediately after a successful write call, the native code computes:
+
+```python
+current_seq = (current_seq + 1) & 0xFFFF
+```
+
+The operation is visible as:
+
+1. Python-number add helper with literal `1`;
+2. mask/modulo conversion against `0xFFFF`;
+3. replacement of the saved sequence object.
+
+This common send block is used by the custom `0x2A` records, so each transmitted Session-B file-protocol record consumes one sequence number.
+
+### 64-record receive-service cadence
+
+The native code explicitly computes a transfer counter modulo `64`:
+
+```python
+if transfer_counter % 64 == 0:
+    ...
+```
+
+At that boundary it resolves the same transport object and invokes the method identified from the transport API as:
+
+```python
+transport.drain(15)
+```
+
+The return object is checked only for call success/non-null at this site; no per-record ACK payload is matched before the next transmission.
+
+Therefore Session B is a **windowed/pipelined write stream**, not a lockstep `send -> matching ACK -> send next` loop.
+
+### Longer drain at iterator exhaustion
+
+When the active transfer iterator is exhausted, the same transport-drain method is invoked with:
+
+```python
+transport.drain(300)
+```
+
+The `300` value is independently recovered from the module's PyLong constant table and is also the default argument in the `EngineTransport.drain` wrapper.
+
+This longer receive-service interval occurs at the end of that streaming iterator before the routine advances into the following Session-B phase.
+
+### Corrected transport model
+
+The accurate current model is therefore:
+
+```text
+Session-A control/stream operations:
+    blocking ACK-oriented helpers where recovered
+
+Session-B custom 0x2A file records:
+    encode current seq
+    transport.write(frame)
+    seq = (seq + 1) & 0xffff
+
+    every 64 records:
+        transport.drain(15)
+
+    at streaming-iterator exhaustion:
+        transport.drain(300)
+```
+
+Do not implement Session B as one blocking `xfer()` per 980-byte data chunk; that would not reproduce DrGrey's recovered transfer behavior.
+
+Still to pin down before enabling a live flasher:
+
+- exact initial Session-B sequence seed as assigned at entry;
+- whether START/DATA/END all pass through precisely the same counter used by the 64-record cadence (the common send block strongly indicates this, but phase edges are still being traced);
+- exact ordering of control calls around each file and the final `00/0A`;
+- complete error/exception behavior if `write` or `drain` fails.
