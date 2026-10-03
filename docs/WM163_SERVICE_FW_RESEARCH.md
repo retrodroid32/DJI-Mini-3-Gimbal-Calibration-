@@ -1453,3 +1453,97 @@ Therefore the earlier note saying those strings were not embedded in
 constant table. The next step is to reconstruct the actual dictionary entries and
 comparison logic from `arb_allows()` and `select_service_fw()`, rather than
 merely infer mappings from string adjacency.
+
+
+## Service firmware catalog and ARB policy fully recovered — 2026-10-03
+
+Reconstructing the full 125-entry Cython compressed constant table (1,713
+decompressed bytes, with all entry lengths accounted for exactly) made it
+possible to resolve the service catalog and selector control flow directly.
+
+### Exact embedded catalog
+
+Module initialization constructs these `ServiceFw` records:
+
+```text
+20.00.0800 -> mini3pro_service.bin
+30.00.0100 -> mini3_service.bin
+20.07.0700 -> mini4k_service.bin
+```
+
+and inserts them into `SERVICE_FW_LIBRARY` under:
+
+```text
+WM162  -> 20.00.0800 / mini3pro_service.bin
+WM163  -> 30.00.0100 / mini3_service.bin
+WA1617 -> 20.07.0700 / mini4k_service.bin
+```
+
+This mapping is now proven from initialization control flow, not inferred from
+string adjacency.
+
+For this project:
+
+```text
+DJI Mini 3 non-Pro = WM163
+DrGrey service image = mini3_service.bin
+DrGrey service version = 30.00.0100
+```
+
+This independently agrees with the supplied package's signed manifest:
+
+```text
+device=wm163
+formal=30.00.0100
+```
+
+### Exact parse_version behavior
+
+Static reconstruction shows the version parser:
+
+1. returns an empty tuple for false/empty input;
+2. replaces `_` with `.`;
+3. replaces `-` with `.`;
+4. splits on `.`;
+5. keeps only tokens where `tok.isdigit()` is true;
+6. converts those tokens to integers;
+7. returns them as a tuple.
+
+Equivalent logic:
+
+```python
+def parse_version(s):
+    if not s:
+        return ()
+    parts = str(s).replace("_", ".").replace("-", ".").split(".")
+    return tuple(int(tok) for tok in parts if tok.isdigit())
+```
+
+### Exact ARB predicate
+
+`arb_allows(service_version, drone_public_version)` parses both versions and
+performs Python rich comparison operation `Py_GE`:
+
+```python
+parse_version(service_version) >= parse_version(drone_public_version)
+```
+
+So a service image is rejected when its parsed version is older than the
+aircraft's reported public version.
+
+### select_service_fw behavior
+
+The selector:
+
+1. uses `SERVICE_FW_LIBRARY` unless an alternate library is supplied;
+2. normalizes the model code with `.strip().upper()`;
+3. obtains that model's candidate list;
+4. returns no image if the model has no candidates;
+5. filters candidates through `arb_allows(fw.version, drone_public_version)`;
+6. if none are eligible, computes the newest available candidate only for the
+   ARB-block diagnostic message and returns no image;
+7. otherwise chooses the **newest eligible** candidate using
+   `max(..., key=lambda f: parse_version(f.version))`.
+
+This proves that DrGrey does not silently cross-select WM162 firmware for WM163
+and does not fall back to an ARB-incompatible older image.
