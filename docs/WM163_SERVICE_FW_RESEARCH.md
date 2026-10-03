@@ -1547,3 +1547,71 @@ The selector:
 
 This proves that DrGrey does not silently cross-select WM162 firmware for WM163
 and does not fall back to an ARB-incompatible older image.
+
+
+## Session-B package parser and exact total_size recovered — 2026-10-03
+
+The higher-level Mini 3 flash worker was traced into
+`drgrey.mini3pro_package.parse_service_package_bytes()`, which is reused as the
+signed DJI service-package parser.
+
+The parser flow is now reconstructed:
+
+1. `BytesIO(data)`
+2. `tarfile.open(...)`
+3. iterate regular tar members;
+4. read every regular member into a dictionary keyed by filename;
+5. locate the single `*.cfg.sig` manifest member;
+6. collect `*.pro.fw.sig` module names;
+7. call `_manifest_order(cfg_blob, module_names)`;
+8. construct the transfer list as `(filename, blob)` pairs beginning with the
+   cfg pair, followed by the manifest-selected module files;
+9. compute:
+   ```python
+   total_size = sum(len(blob) for _name, blob in transfer_files)
+   ```
+10. return the package result containing the transfer files and `total_size`.
+
+The generator used by `sum()` was statically decoded: for each two-element
+`(name, blob)` pair it takes the second element and calls `PyObject_Size`,
+confirming that only the blob byte length is counted.
+
+The UI worker then obtains `pkg.files`, applies the separately recovered
+`gray_order()`, obtains `pkg.total_size`, and calls:
+
+```python
+flasher.session_b(ordered_files, total_size)
+```
+
+So Session B transfers the signed cfg plus all signed module blobs; tar headers,
+padding, filenames and DUML framing are not included in `total_size`.
+
+For the validated WM163 V30.00.0100 package:
+
+```text
+wm163.cfg.sig   2,336
+0100       39,459,264
+0105          245,824
+0306        1,760,032
+0905       10,390,912
+1100           94,720
+1200           56,352
+---------------------
+total_size 52,009,440 bytes
+```
+
+The complete tar is 52,019,200 bytes, leaving 9,760 bytes of tar
+metadata/padding that are intentionally not reported/transferred as firmware
+content.
+
+After `gray_order()`, the actual Session-B transfer order is:
+
+```text
+wm163.cfg.sig
+0100
+0105
+0306
+0905
+1100
+1200
+```
