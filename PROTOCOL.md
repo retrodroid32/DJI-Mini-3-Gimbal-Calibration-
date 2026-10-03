@@ -298,3 +298,26 @@ successful, and any other status as not successful. The WM163 capture reached
 No `0x04/0x68 uav_gimbal_cali_data_exist_req/rsp` traffic was observed during
 the normal Auto Calibration capture, so that name-only command is not assumed to
 be part of the normal calibration path.
+
+
+## Direct mapping of WM163 40011 + 40021
+
+The normal Auto Calibration capture repeatedly included:
+
+`GIMBAL -> PC, cmd_set 0x00, cmd_id 0xF1, payload 80 00 00 01`.
+
+DJI command tables identify General `0xF1` as `GetPushCheckStatus`.
+`DataGimbalGetPushCheckStatus` parses the first four bytes little-endian and
+defines bit 7 as `getIMUCalibrateMatchStatus()` and bit 24 as
+`getGimbalWholeCalibrateIsError()`. The current DJI-family implementation uses
+bit 24 directly for whole-gimbal calibration error.
+
+DJI's `GimbalDiagnosticsHandler` maps those predicates to:
+
+- `IMU_DATA_DISMATCH` = 40021
+- `CALIBRATE_ERROR` = 40011
+
+For payload `80 00 00 01` the 32-bit value is `0x01000080`, so exactly those
+two diagnostic bits are set. This provides protocol-level confirmation of the
+same two errors shown by DJI Fly after reboot, despite the separate
+AutoCalibrationStatus stream reaching `64 00` (100%, success).
