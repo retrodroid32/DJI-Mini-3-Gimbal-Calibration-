@@ -96,8 +96,13 @@ def select_service_fw(
 
 def has_service_fw(
     model_code: object,
-    drone_public_version: object,
     library: Mapping[str, Sequence[ServiceFw]] | None = None,
 ) -> bool:
-    selected, _ = select_service_fw(model_code, drone_public_version, library)
-    return selected is not None
+    """Recovered DrGrey catalog-availability predicate.
+
+    This intentionally performs no ARB/public-version check. Use
+    select_service_fw() for the ARB-aware selection gate.
+    """
+    lib = SERVICE_FW_LIBRARY if library is None else library
+    model = ("" if model_code is None else str(model_code)).strip().upper()
+    return bool(lib.get(model, ()))
