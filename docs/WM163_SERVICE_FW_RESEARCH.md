@@ -2896,3 +2896,50 @@ has_service_fw(model_code, library=...)
 It now tests only whether the normalized model has one or more catalog
 candidates. ARB-aware eligibility remains exclusively in
 `select_service_fw()`.
+
+
+## Recovered-module search confirms no public-version producer — 2026-10-03
+
+A zlib-aware scan was run across every recovered Cython `.pyd` module in the
+DrGrey application, rather than relying on ordinary PE `strings` output.
+
+Search terms:
+
+```text
+public_version
+drone_public_version
+firmware_version
+formal_version
+```
+
+Only one recovered extension contains either public-version identifier:
+
+```text
+drgrey/service_fw.cp314-win_amd64.pyd
+    public_version
+    drone_public_version
+```
+
+No public-version producer/reference was found in the recovered:
+
+```text
+drgrey.ui.flasher
+production.licensing.client
+drgrey.device_info
+core.device_info
+drgrey.scanner
+drgrey.commands
+drgrey.unit_diagnostics
+core.unit_diagnostics
+```
+
+This independently confirms the call-graph finding: the normal Mini-3 UI
+download/flash path does not retrieve an aircraft public-version value and
+therefore does not invoke the ARB-aware selector with live aircraft version
+state.
+
+Accordingly, the guarded replacement should treat ARB verification as an
+intentional safety enhancement. It must obtain a trustworthy read-only
+aircraft public-version value from a separately proven source before using
+`select_service_fw()`; if that source is unavailable or ambiguous, live
+service flashing must remain blocked.
