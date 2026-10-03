@@ -2329,3 +2329,55 @@ Session-A exception -> abort
 Session-B exception -> abort
 no automatic retry at either boundary
 ```
+
+
+## Session-A temporary-loader wait is bounded to 60 seconds — 2026-10-03
+
+Static tracing of the late `Flasher.session_a()` body resolves the maximum loader-handoff wait.
+
+After the Session-A loader has been transferred, verified, and started by `A/CMD_0B`, the routine enters the wait described by its recovered log strings:
+
+```text
+waiting for the loader to boot (poll version→0x28, up to %ds)…
+loader up ('WM163 UAV') after %.0fs
+```
+
+The Cython integer cache reference at native address `0x18000FC44` is module integer index 16:
+
+```text
+index 16 = 0x3C = 60
+```
+
+That object is used in the elapsed-time comparison controlling the wait loop. The comparison opcode is the Cython/CPython rich-compare form for `>` against the recovered 60-second object.
+
+Therefore the handoff timeout is:
+
+```text
+SESSION_A_LOADER_WAIT_SECONDS = 60
+```
+
+If the loader identity is not observed before the bound, DrGrey's recovered error text is:
+
+```text
+the loader did not report 'WM163 UAV' within %ds (poll 0x01→0x28). Did Session A leave the loader running?
+```
+
+So this is a hard Session-A failure: the method raises/fails, the higher-level worker follows its already-recovered fail-closed exception path, and Session B is not started.
+
+The resulting handoff model is now:
+
+```text
+A/CMD_0B
+  ↓
+retain same EngineTransport / Flasher
+  ↓
+poll for temporary loader identity
+  ↓
+require 'WM163 UAV'
+  ↓
+maximum wait 60 s
+  ├─ identity observed -> session_a returns normally -> worker calls session_b
+  └─ timeout/error     -> session_a fails -> worker aborts; no Session B
+```
+
+The recovered error string identifies the loader-version probe as `0x01→0x28`; exact packet-field reconstruction for that Session-A wait probe is being kept separate from the already-proven post-finalize `0x01→0x28` hold probe until all of its sequence/timeout fields are mapped.
