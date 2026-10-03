@@ -2986,3 +2986,97 @@ Until a separate read-only source is proven to return the aircraft-level public
 release string, the stricter replacement ARB guard must remain unresolved and
 live service flashing must remain disabled rather than substituting one of the
 indexed module versions.
+
+
+## Aircraft cfg.sig FORMAL is the correct ARB input source — 2026-10-03
+
+A separate recovered DrGrey diagnostic closes the conceptual public-version
+source problem.
+
+`drgrey.ui.diagnostics` exposes:
+
+```text
+CfgManifestMixin._run_cfg_manifest
+CfgManifestMixin._run_cfg_manifest_impl
+```
+
+and imports the low-level implementation from `core.commands`:
+
+```text
+cfg_manifest_build_read
+cfg_manifest_read
+cfg_manifest_parse
+cfg_manifest_summary
+CFG_MANIFEST_SENDER
+CFG_MANIFEST_TARGETS
+CFG_MANIFEST_CS
+CFG_MANIFEST_CID
+```
+
+The recovered user-facing description is explicit:
+
+```text
+Read-only. Reads the drone's own firmware manifest (<model>.cfg.sig)
+over DUML 0x00/0x4F, paged by offset.
+
+Gives the aircraft's FORMAL firmware version, antirollback,
+enforce, validity window, and full module inventory.
+
+Does not write anything and does not need factory mode.
+```
+
+The lower `core.commands` constant/name blob independently describes the same
+path as:
+
+```text
+Firmware manifest (cfg.sig)
+lectura paginada por offset; trae antirollback (=ARB), enforce
+y la lista de módulos. WM163 responde en (1,0).
+```
+
+Its parser explicitly contains patterns for:
+
+```text
+<device id="...">
+<firmware ...>
+<release ...>
+antirollback
+antirollback_ext
+enforce
+enforce_ext
+enforce_time
+formal
+version
+modules
+```
+
+This establishes the correct semantic source for the recovered ARB API:
+
+```text
+drone_public_version
+    := aircraft's own installed cfg.sig firmware FORMAL version
+```
+
+It is **not** any module-specific `loader` or `app` field.
+
+The exact 0x00/0x4F wire request builder/paging constants are still being
+decoded before adding a new transport implementation. However, the source
+semantics are strong enough to harden the offline policy layer now.
+
+`wm163_service_fw_policy.py` therefore adds:
+
+```python
+select_service_fw_from_aircraft_manifest(model_code, aircraft_manifest)
+```
+
+The helper:
+
+1. requires a parsed aircraft manifest;
+2. accepts only the aircraft-level `formal` value (top-level or nested under
+   `firmware`);
+3. refuses to infer a public version from module loader/app fields;
+4. passes that FORMAL value into the already-recovered
+   `select_service_fw(...)` ARB predicate;
+5. fails closed if FORMAL is absent.
+
+This is transport-agnostic and does not enable live flashing.
