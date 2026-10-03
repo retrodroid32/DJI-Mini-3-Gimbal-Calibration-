@@ -1615,3 +1615,26 @@ wm163.cfg.sig
 1100
 1200
 ```
+
+
+## Session-B sequence state is caller-seeded — 2026-10-03
+
+Further static tracing of the native `Flasher.session_b()` implementation narrows the remaining sequence-number question.
+
+The Cython name table for `drgrey.mini3_service_flash` contains an explicit `seq0` argument. In the native Session-B body, the Python integer received through that argument path is copied into the saved sequence-state slot before the custom transfer loop. The later common send paths repeatedly replace that saved object with the recovered operation:
+
+```python
+seq = (seq + 1) & 0xFFFF
+```
+
+This proves the Session-B transfer does not synthesize an opaque/random sequence seed internally: its starting sequence is supplied by the caller through the `seq0` parameter.
+
+The higher-level UI worker has already been traced calling:
+
+```python
+flasher.session_b(ordered_files, total_size)
+```
+
+without an explicit sequence argument, so the remaining exact question is now reduced to one item: recover the Cython wrapper's default value for `seq0` (or the equivalent default object installed by the wrapper). Do not assume that default is zero until the wrapper/default-object mapping is proven.
+
+This also confirms that the same saved sequence state seen in the 0x2A transfer body is the state advanced modulo 16 bits; the next trace target is the wrapper default plus the phase edges around START/DATA/END and finalization.
