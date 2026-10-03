@@ -1539,18 +1539,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         return run_auto_cal_capture(args.port, args.baudrate, args.seconds, args.verbose)
 
     if args.action == "fix-imu-40021-short":
-        print(
-            "DISABLED in v0.12.1: newer recovery evidence shows DrGrey wraps the short "
-            "40021 operation in factory/service-state handling whose exact wire "
-            "transactions are not yet decoded.",
-            file=sys.stderr,
+        if not args.yes:
+            parser.error(
+                "refusing to run the WM163 40021 repair without --yes; "
+                "verify this aircraft is DJI Mini 3 / WM163 and remove the propellers"
+            )
+        print("WARNING: This performs the bank-confirmed WM163 short 40021 repair.")
+        print("Remove propellers. Use only on DJI Mini 3 / WM163 with active diagnostic 40021.")
+        return run_fix_imu_40021_short(
+            args.port,
+            args.baudrate,
+            args.precheck_seconds,
+            args.reply_timeout_seconds,
+            args.verbose,
         )
-        print(
-            "No write was sent. Use dry-run-40021 only until _read_factory_state / "
-            "_set_factory are capture- or disassembly-verified.",
-            file=sys.stderr,
-        )
-        return 12
 
     if not args.yes:
         parser.error(
