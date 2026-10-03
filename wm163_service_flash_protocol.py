@@ -221,3 +221,17 @@ def session_b_finalize_seq(files) -> int:
     # ENTER and REPORT_SIZE consume the first two sequence values.
     first_record_seq = seq_after(SESSION_B_SEQ0, 2)
     return seq_after(first_record_seq, session_b_record_count(files))
+
+
+def ctrl_ack_payload_accepted(payload: bytes) -> bool:
+    """Recovered DrGrey _ctrl ACK payload acceptance rule.
+
+    After match_ack() has already confirmed response flag, command id and
+    sequence, _ctrl examines payload[:1].  An empty payload or a leading
+    0x00 status is accepted.  Any other leading status is a device-side
+    rejection.
+
+    This helper is offline/transport-agnostic; it does not transmit anything.
+    """
+    status = bytes(payload)[:1]
+    return status in (b"", b"\x00")
