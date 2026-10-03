@@ -2816,3 +2816,83 @@ not equivalent to a positively confirmed reboot.
 
 A guarded reimplementation should preserve this distinction and must not
 promote a single empty 500-ms receive window into a false reboot-success signal.
+
+
+## Mini-3 licensing download path is model-only — 2026-10-03
+
+Static reconstruction of
+`production.licensing.client.LicenseClient.fetch_mini3_fw` resolves the
+remaining public-version-source question for the normal Mini-3 UI path.
+
+The Cython method wrapper begins at `0x180009980`. Its argument parser has
+three slots: two required arguments and one optional argument. Correlating the
+parser slots with the decompressed Cython name table and the native body gives
+the effective signature:
+
+```python
+fetch_mini3_fw(self, dest_path, model=...)
+```
+
+The optional third value is the model selector used by the download request.
+The UI call site passes the connected/model-derived value using the exact
+keyword:
+
+```text
+model
+```
+
+The licensing client's complete decompressed name table contains
+`fetch_mini3_fw`, `dest_path`, `model`, `mini3_fw_url`, `params`,
+and the download/streaming names, but contains none of:
+
+```text
+public_version
+drone_public_version
+arb_allows
+select_service_fw
+```
+
+The native body inserts the model argument into an outbound mapping before the
+HTTP request. No public-firmware-version argument is accepted by this method or
+constructed locally for this request.
+
+Combined with the separately reconstructed UI name table, this proves:
+
+```text
+Mini-3 UI availability:
+    service_fw.has_service_fw(model_code)
+    -> catalog presence only
+
+Mini-3 server download:
+    LicenseClient.fetch_mini3_fw(dest_path, model=...)
+    -> model-selected service image request
+
+_M3FlashWorker.run:
+    validates/parses the selected package and executes Session A/B
+    -> no local public-version selector call
+
+service_fw.select_service_fw(model_code, drone_public_version):
+    exists as the recovered ARB-aware policy API
+    -> not invoked by this normal UI download/worker path
+```
+
+Therefore there is no aircraft public-version object to recover from
+`_M3FlashWorker.run()`: the earlier blocker was based on an incorrect
+assumption about where DrGrey applied the ARB-aware selector.
+
+For the guarded replacement implementation, preserve a stricter policy than
+this UI path: require an explicit, trustworthy aircraft public-version source
+before calling `select_service_fw()`, and fail closed if that source cannot be
+obtained. Do not treat `has_service_fw("WM163")` or a successful server
+download as ARB authorization.
+
+The offline `has_service_fw` reconstruction has been corrected to match the
+binary signature exactly:
+
+```python
+has_service_fw(model_code, library=...)
+```
+
+It now tests only whether the normalized model has one or more catalog
+candidates. ARB-aware eligibility remains exclusively in
+`select_service_fw()`.
