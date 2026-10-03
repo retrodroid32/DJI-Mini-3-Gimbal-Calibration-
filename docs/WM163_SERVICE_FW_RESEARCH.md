@@ -2943,3 +2943,46 @@ intentional safety enhancement. It must obtain a trustworthy read-only
 aircraft public-version value from a separately proven source before using
 `select_service_fw()`; if that source is unavailable or ambiguous, live
 service flashing must remain blocked.
+
+
+## Existing indexed module probes are not a public-version source — 2026-10-03
+
+The branch already has a read-only indexed version probe for responding WM163
+modules. Observed values include:
+
+```text
+0100 / CAMERA.0
+    hw='WM163..C'
+    loader=0x00000001
+    app=0x01400098
+
+0306 / FLYC.6
+    hw='687ALC600202G0'
+    loader=0x22010107
+    app=0x03040b22
+
+1100 / BATTERY.0
+    hw='BA01WM162'
+    loader=0x00000001
+    app=0x0a4b0011
+```
+
+These are module-specific hardware/loader/application reports. There is no
+recovered evidence equating any of these raw module `app` values with the
+aircraft-level DJI public firmware version expected by:
+
+```python
+arb_allows(service_version, drone_public_version)
+```
+
+They must therefore **not** be fed into the ARB comparator.
+
+In particular, values such as FLYC `app=0x03040b22` are an encoded module
+application version and are semantically different from dotted public release
+identifiers such as `01.00.xxxx` or the service catalog's
+`30.00.0100`.
+
+Until a separate read-only source is proven to return the aircraft-level public
+release string, the stricter replacement ARB guard must remain unresolved and
+live service flashing must remain disabled rather than substituting one of the
+indexed module versions.
