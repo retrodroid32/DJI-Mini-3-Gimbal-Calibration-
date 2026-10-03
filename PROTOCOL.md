@@ -258,3 +258,23 @@ plus zero-filled payloads. In DJI's decompiled `Ccode` enum, `0xFD` is
 `FLASH_FLUSHING`. This is recorded as the protocol result only; it does not
 establish that flash activity is actually occurring, nor does it identify a
 camera/gimbal binding field.
+
+
+## PC-only normal auto calibration
+
+Static DJI Fly reverse engineering identifies `DataGimbalAutoCalibration` as:
+
+- receiver: GIMBAL (4)
+- command set: GIMBAL (0x04)
+- command id: 0x08
+- request payload: empty
+
+Status is returned through the gimbal auto-calibration status path. This command
+shares command ID 0x08 with older service-tool calibration subcommands but differs
+by payload: normal Auto Calibration is empty, JointCoarse uses 01, and LinearHall
+uses 02.
+
+v0.9.0 adds `auto-cal-capture` for Mini 3 units whose USB service boot prevents
+a simultaneous normal controller/DJI Fly connection. It starts only the normal
+auto-calibration request and then captures gimbal traffic. It does not guess the
+payload for name-only `0x04/0x68 uav_gimbal_cali_data_exist_req`.
