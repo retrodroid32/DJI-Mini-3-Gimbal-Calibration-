@@ -2579,3 +2579,78 @@ Post-finalize hold:
 ```
 
 So `b""` and an exception are distinct states in the recovered transport stack; a faithful implementation must not treat an ordinary empty response window as an automatic hard failure during loader polling.
+
+
+## `_ctrl` / `_stream` ACK deadlines and no-retransmit behavior recovered — 2026-10-03
+
+Native tracing of the two ACK-gated helpers resolves their timeout units and retry model.
+
+### Wrapper defaults are seconds despite the `timeout_ms` name
+
+The Python-visible wrappers expose:
+
+```python
+Flasher._ctrl(self, cmd_id, payload, dst, seq, what, timeout_ms=15)
+Flasher._stream(self, cmd_id, payload, dst, seq, what, timeout_ms=20)
+```
+
+The parameter name is misleading. In both native bodies the value is added directly to `time()` using Python numeric addition:
+
+```python
+deadline = time() + timeout_ms
+```
+
+Since `time()` is in seconds, the recovered defaults are:
+
+```text
+_ctrl ACK deadline   = 15 seconds
+_stream ACK deadline = 20 seconds
+```
+
+### Initial transmit / receive window
+
+Each helper constructs one ACK-requested frame and invokes `EngineTransport.xfer(frame)` once. No explicit `timeout_ms` keyword is supplied to `xfer` at these call sites, so the already-recovered `EngineTransport.xfer` default applies:
+
+```text
+initial xfer response window = 4000 ms
+```
+
+The bytes returned by that first xfer are placed into the accumulated receive collection and examined through `match_ack(...)`.
+
+### Additional ACK collection uses `drain(400)`
+
+If no matching ACK is found in the accumulated bytes and the helper has not passed its deadline, both native bodies call:
+
+```python
+transport.drain(400)
+```
+
+The returned bytes are appended to the receive collection and `match_ack(...)` is run again. The loop continues until either a matching ACK is found or the deadline expires.
+
+The module-state address used for this call maps exactly to the recovered `drain` name, and the argument object is cached integer `400`.
+
+### No request retransmission
+
+There is only one reference to the `xfer` method in each native helper body. The deadline loops jump back to the receive/`drain(400)` path after the original send; they do not return to the encode/xfer transmit site.
+
+Therefore the recovered model is:
+
+```text
+_ctrl:
+  send once via xfer(default 4000 ms)
+  search accumulated bytes for matching ACK
+  while no match and before time()+15 s deadline:
+      append drain(400)
+      search again
+  never retransmit the request
+
+_stream:
+  send once via xfer(default 4000 ms)
+  search accumulated bytes for matching ACK
+  while no match and before time()+20 s deadline:
+      append drain(400)
+      search again
+  never retransmit the stream frame
+```
+
+`match_ack` remains the previously recovered predicate requiring response flag, matching command ID, and matching sequence number. The exact interpretation of a matched control ACK payload as accepted versus rejected is a separate remaining detail; the binary contains the recovered error fragments `%s: no response from the drone` and `: rejected (` but that payload-status check is not asserted here until fully mapped.
