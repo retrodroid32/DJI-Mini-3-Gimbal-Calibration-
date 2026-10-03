@@ -1691,3 +1691,95 @@ seq = (seq + 1) & 0xFFFF
 ```
 
 This removes the Session-B initial-sequence seed from the blocker list. Remaining phase-edge work is to pin down exactly which control records consume separate sequence values (if any) around ENTER, REPORT_SIZE, START/DATA/END, and FINALIZE, plus the Session-A-to-loader-to-Session-B handoff/error paths.
+
+
+## CORRECTION — exact Session-B defaults are seq0=0x3022 and timeout_s=180 — 2026-10-03
+
+The immediately preceding note that identified the omitted `seq0` default as zero was based on an incorrect base-address assumption for Cython's cached integer table. Static reconstruction of the actual module-state base resolves this exactly and **supersedes that note**.
+
+### Module-state layout proof
+
+Cython initializes the module-state base with:
+
+```text
+0x180025D60
+```
+
+The cached PyLong table begins at module-state offset:
+
+```text
++0xA20
+```
+
+therefore cached integer entry zero lives at:
+
+```text
+0x180026780
+```
+
+not at `0x180026880`.
+
+The `Flasher.session_b` wrapper constructs its two-default tuple with:
+
+```text
+first optional default  -> 0x180026880
+second optional default -> 0x180026838
+```
+
+Relative to the actual integer-table start, those are:
+
+```text
+0x180026880 -> integer-cache index 32
+0x180026838 -> integer-cache index 23
+```
+
+### Integer table reconstruction
+
+The PyLong initializer is directly visible in module init. Relevant entries are:
+
+```text
+index 20 = 128
+index 21 = 140
+index 22 = 150
+index 23 = 180
+index 24 = 200
+index 25 = 255
+index 26 = 300
+index 27 = 400
+index 28 = 500
+index 29 = 980
+index 30 = 1000
+index 31 = 4000
+index 32 = 0x3022 = 12322
+index 33 = 0x3692 = 13970
+index 34 = 0x4900 = 18688
+```
+
+The wrapper's five parameter-name objects correspond to the recovered Session-B signature fields present in the Cython name table:
+
+```python
+session_b(self, files, total_size, seq0=0x3022, timeout_s=180)
+```
+
+Therefore the exact default starting sequence is:
+
+```text
+seq0 = 0x3022
+     = 12322 decimal
+```
+
+and the Session-B timeout argument defaults to:
+
+```text
+timeout_s = 180
+```
+
+The custom 0x2A record stream then advances the saved sequence with the already recovered rule:
+
+```python
+seq = (seq + 1) & 0xFFFF
+```
+
+after each successful write.
+
+This correction removes the initial Session-B sequence seed as an unknown and explains why assuming a conventional zero seed would have produced a non-faithful implementation. Do not use the superseded zero-default note.
