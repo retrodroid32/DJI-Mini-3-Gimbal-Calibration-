@@ -887,3 +887,53 @@ formal = 30.00.0100
 ```
 
 from its own signed manifest and hashes. This correction only affects claims about how DrGrey's `service_fw` module selects/accepts service images.
+
+
+## Cython transport wrapper mapping and sibling hold routine — 2026-10-03
+
+Further static correlation of the Cython method table in `mini3_service_flash.cp314-win_amd64.pyd` recovered exact native wrapper entry points:
+
+```text
+encode                  -> 0x180002960
+decode_all              -> 0x1800044C0
+match_ack               -> 0x180006450
+EngineTransport.xfer    -> 0x1800074E0
+EngineTransport.write   -> 0x180007B90
+EngineTransport.drain   -> 0x180008130
+Flasher._ctrl           -> 0x1800090B0
+Flasher._stream         -> 0x18000A980
+Flasher.session_b       -> 0x18000DCD0
+Flasher._hold_for_commit wrapper -> 0x180012F20
+Flasher._hold_for_commit native  -> 0x1800131F0
+```
+
+These addresses provide concrete call-graph anchors for resolving the final post-finalize behavior.
+
+A second important finding is that `mini3pro_service_flash.cp314-win_amd64.pyd` contains its own:
+
+```text
+Flasher.finalize
+Flasher.monitor_install
+Flasher._hold_for_commit
+```
+
+with:
+
+```text
+Mini 3 Pro _hold_for_commit wrapper -> 0x180017230
+Mini 3 Pro _hold_for_commit native  -> 0x180017500
+```
+
+The Mini 3 Pro routine has the same broad Cython control-flow shape as the Mini 3 implementation: argument parsing wrapper followed by a large native loop performing repeated object/method lookups, calls, comparisons and cleanup. This creates a useful sibling implementation for differential analysis of the commit phase.
+
+The Mini 3 method table also confirms the wrapper addresses above by direct `PyMethodDef`-style entries rather than inference from nearby disassembly.
+
+Next static target:
+
+1. normalize/diff Mini 3 `0x1800131F0` against Mini 3 Pro `0x180017500`;
+2. identify the shared dynamic call that resolves to transport `write/xfer/drain`;
+3. reconstruct its Python argument vector;
+4. recover the exact encoded destination/cmdset/cmdid/payload/sequence values;
+5. only then implement the post-finalize hold in the native WM163 flasher.
+
+No live service-flash entrypoint should be enabled until that argument vector is fully proven.
