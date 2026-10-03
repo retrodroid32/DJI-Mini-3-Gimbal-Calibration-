@@ -884,6 +884,22 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
     return 0 if responses else 4
 
 
+def decode_gimbal_imu_0x51_payload(payload: bytes) -> tuple[list[float], bytes]:
+    """Decode the observed WM163 GIMBAL 0x04/0x51 response layout.
+
+    Target aircraft observation after clearing 40021:
+      99-byte payload = 24 little-endian float32 values (96 bytes)
+                      + 3-byte opaque trailer.
+
+    The trailer's semantics are not claimed yet; preserve it byte-for-byte.
+    """
+    if len(payload) != 99:
+        raise ValueError(f"expected 99-byte WM163 0x04/0x51 payload, got {len(payload)}")
+    values = list(struct.unpack("<24f", payload[:96]))
+    trailer = payload[96:]
+    return values, trailer
+
+
 def run_40011_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
     """Read-only discovery probe for the remaining WM163 40011 repair path.
 
@@ -945,6 +961,14 @@ def run_40011_probe(port: str, baudrate: int, timeout_seconds: float, verbose: i
                     f"gimbal 04/51: payload_len={len(imu.payload)} "
                     f"payload={imu.payload.hex(' ')}"
                 )
+                if len(imu.payload) == 99:
+                    values, trailer = decode_gimbal_imu_0x51_payload(imu.payload)
+                    print("gimbal 04/51 decoded: 24 float32 values + 3-byte trailer")
+                    for index, value in enumerate(values):
+                        print(f"  f[{index:02d}] = {value:.9g}")
+                    print(f"  trailer = {trailer.hex(' ')}")
+                elif imu.payload:
+                    print("gimbal 04/51: unknown payload layout; raw bytes preserved only")
                 if imu.payload:
                     print(
                         "NOTE: preserve this exact 04/51 payload; it is the device-specific "
