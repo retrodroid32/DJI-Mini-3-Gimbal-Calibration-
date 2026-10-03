@@ -2079,3 +2079,91 @@ The 64-record receive-service cadence produces:
 followed by the separately recovered end-of-iterator `drain(300)` before the final control phase.
 
 This gives a strong offline invariant for a faithful V30 transfer implementation: wrong file ordering, wrong chunk size, omitted START/END, accidental tar-padding transfer, or an incorrect sequence increment will cause the calculated B/FINALIZE sequence to differ from `0xFF83`.
+
+
+## Worker handoff: same Flasher and EngineTransport are reused — 2026-10-03
+
+The remaining Session-A-to-Session-B object-lifetime question is now resolved by reconstructing the Cython string table and annotating the native `_M3FlashWorker.run()` call sites.
+
+### Exact Cython name mapping
+
+The UI extension stores a 334-entry string-length table next to its compressed name blob. Reconstructing that table maps the worker's module-state addresses exactly, including:
+
+```text
+0x180023F98 -> EngineTransport
+0x180023FA8 -> Flasher
+0x180024228 -> _fl
+0x180024290 -> gray_order
+0x180024308 -> load_loader
+0x180024318 -> log
+0x180024460 -> on_progress
+0x180024528 -> session_a
+0x180024530 -> session_b
+0x180024628 -> total_size
+```
+
+This removes the need to infer these call sites from nearby assembly shape.
+
+### One EngineTransport instance
+
+At native `_M3FlashWorker.run()` address `0x180003091`, the worker constructs `EngineTransport` once. The returned Python object is preserved in the worker frame and later recovered from the same saved slot before the WM163 `Flasher` constructor.
+
+There is no second `EngineTransport` construction in the WM163 Session-A -> Session-B path.
+
+### One Flasher instance
+
+At `0x180005287`, the worker constructs one `Flasher` object. The returned object is saved in register/local state and is then used as the first positional object (the receiver) for both session method calls.
+
+The Session-A vectorcall at `0x18000533E` is equivalent to:
+
+```python
+flasher.session_a(loader)
+```
+
+The receiver placed into the call vector is the same saved `Flasher` object created at `0x180005287`.
+
+After that call returns successfully, the native code does not construct another `Flasher` or `EngineTransport`. It advances directly to the Session-B vectorcall at `0x1800053FD`:
+
+```python
+flasher.session_b(ordered_files, total_size)
+```
+
+The first positional object in this call vector is the same `Flasher` object used for `session_a`.
+
+Therefore the higher-level WM163 orchestration is now proven as:
+
+```python
+transport = EngineTransport(...)
+flasher = Flasher(..., transport, log=..., on_progress=...)
+
+flasher.session_a(loader)
+flasher.session_b(ordered_files, total_size)
+```
+
+with no worker-level transport/flasher reconstruction between the two sessions.
+
+### No explicit worker-level reconnect between sessions
+
+The recovered Cython name table contains no worker API names for `open`, `close`, or `reconnect`, and—more importantly—the native path between the successful `session_a` return and the `session_b` call contains no transport constructor or replacement assignment. The same object graph remains live across the loader handoff.
+
+This means a faithful implementation must not automatically close/reopen the COM transport between Session A and Session B unless later lower-level evidence specifically requires it. Session A's internal wait for the temporary `WM163 UAV` loader is part of the handoff while the existing transport/flasher state is retained.
+
+### Failure propagation at the boundary
+
+The worker does not inspect a special success payload returned by `session_a`. It only requires the Python call to return a non-NULL object. A raised exception takes the worker's error path and Session B is not invoked.
+
+Likewise, Session B begins immediately after a normal Session-A return; there is no separate worker-level reconnect-success predicate between them.
+
+So the recovered boundary semantics are:
+
+```text
+session_a raises/fails
+    -> worker error path
+    -> DO NOT call session_b
+
+session_a returns normally
+    -> retain same Flasher/EngineTransport
+    -> call session_b immediately
+```
+
+This closes the previously listed transport-object lifetime/reuse blocker. Remaining high-value worker work is the exact public-version object supplied to the ARB gate and complete mapping of the worker's user-facing exception/error strings.
