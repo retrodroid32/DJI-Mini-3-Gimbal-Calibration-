@@ -840,3 +840,50 @@ safe reboot/return to production firmware
 ```
 
 Do not replace this missing behavior with a guessed keepalive or fixed sleep. A real DrGrey service-flash capture, or a fully resolved static reconstruction of the method calls inside `_hold_for_commit`, is still required before enabling live service flashing.
+
+
+## ARB / selector correction and method mapping — 2026-10-03
+
+Further direct inspection of the recovered binaries corrected an earlier assumption.
+
+### Native method entry points recovered from `service_fw.cp314-win_amd64.pyd`
+
+The Cython method table maps:
+
+```text
+parse_version       -> 0x180001580
+arb_allows          -> 0x180002400
+select_service_fw   -> 0x180002980
+has_service_fw      -> 0x180004700
+```
+
+These addresses are now suitable anchors for static control-flow recovery.
+
+### Important correction
+
+A fresh byte-level search of the recovered `service_fw.cp314-win_amd64.pyd`, its disassembly report, and strings report did **not** find the following as plain embedded strings:
+
+```text
+20.00.0800
+20.07.0700
+30.00.0100
+WM163
+WM162
+WA1617
+mini3_service.bin
+mini3pro_service.bin
+mini4k_service.bin
+```
+
+Therefore previous notes describing these as directly embedded in the `service_fw` binary should not be used as proof of the selector's internal mapping.
+
+They may originate from higher-level catalog/UI/recovered-context data or may be constructed indirectly at runtime. Until the `select_service_fw` and `arb_allows` control flow is decoded, do **not** hard-code a model/version-to-service-image mapping based on those strings alone.
+
+The validated V30 package itself remains independently proven as:
+
+```text
+device = wm163
+formal = 30.00.0100
+```
+
+from its own signed manifest and hashes. This correction only affects claims about how DrGrey's `service_fw` module selects/accepts service images.
