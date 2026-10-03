@@ -52,6 +52,7 @@ CMD_ID_GIMBAL_CALIB = 0x08
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
 CMD_ID_GIMBAL_AUTO_CAL_STATUS = 0x30
 CMD_ID_GIMBAL_WRITE_IMU = 0x36
+CMD_ID_GIMBAL_READ_IMU = 0x51
 CMD_ID_CAMERA_GET_SENSOR_ID = 0xB5
 
 PACKET_TYPE_REQUEST = 0
@@ -883,6 +884,81 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
     return 0 if responses else 4
 
 
+def run_40011_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
+    """Read-only discovery probe for the remaining WM163 40011 repair path.
+
+    Recovered DrGrey beta flow begins by reading:
+      CAMERA 0x02/0xB5 (camera identity)
+      GIMBAL 0x04/0x51 (live IMU block)
+
+    This command deliberately stops there. It does NOT send 0x00/0x50,
+    0x04/0x36, 0x04/0x68, calibration commands, or reboot requests.
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: READ-ONLY 40011 discovery probe.")
+    print("Queries: CAMERA 0x02/0xB5 and GIMBAL 0x04/0x51 only.")
+    print("No calibration, association, IMU write, save, or reboot command is sent.")
+
+    responses = 0
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+            camera = send_read_query(
+                ser_obj,
+                receiver=COMM_DEV_CAMERA,
+                cmd_set=2,
+                cmd_id=CMD_ID_CAMERA_GET_SENSOR_ID,
+                payload=b"\x00\x00\x00\x00",
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+                label="camera 02/B5",
+            )
+            if camera is None:
+                print("camera 02/B5: no matching response")
+            else:
+                responses += 1
+                print(
+                    f"camera 02/B5: payload_len={len(camera.payload)} "
+                    f"payload={camera.payload.hex(' ')}"
+                )
+                print(f"camera 02/B5 decoded: {describe_camera_sensor_id_payload(camera.payload)}")
+
+            imu = send_read_query(
+                ser_obj,
+                receiver=COMM_DEV_GIMBAL,
+                cmd_set=CMD_SET_ZENMUSE,
+                cmd_id=CMD_ID_GIMBAL_READ_IMU,
+                payload=b"",
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+                label="gimbal 04/51",
+            )
+            if imu is None:
+                print("gimbal 04/51: no matching response")
+            else:
+                responses += 1
+                print(
+                    f"gimbal 04/51: payload_len={len(imu.payload)} "
+                    f"payload={imu.payload.hex(' ')}"
+                )
+                if imu.payload:
+                    print(
+                        "NOTE: preserve this exact 04/51 payload; it is the device-specific "
+                        "input needed to validate the recovered read/push/save contract."
+                    )
+    except Exception as exc:
+        if serial is not None and isinstance(exc, serial.SerialException):
+            print(f"ERROR: serial failure on {port}: {exc}", file=sys.stderr)
+            return 5
+        raise
+
+    return 0 if responses else 4
+
+
 def run_gimbal_diagnostics(port: str, baudrate: int, seconds: float, verbose: int) -> int:
     """Passively read the gimbal General/0xF1 check-status push. Sends nothing."""
     if serial is None:
@@ -1399,6 +1475,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="per-query response timeout (default: 2.5 seconds)",
     )
 
+    probe_40011 = sub.add_parser(
+        "probe-40011",
+        help="read-only DrGrey-path discovery: read camera 02/B5 and gimbal IMU 04/51",
+    )
+    probe_40011.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    probe_40011.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    probe_40011.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=3.0,
+        help="per-query response timeout (default: 3 seconds)",
+    )
+
     diag = sub.add_parser(
         "diagnose-gimbal",
         help="passively decode DJI gimbal check-status diagnostics (General 0x00/0xF1)",
@@ -1521,6 +1610,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "identify":
         return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
+
+    if args.action == "probe-40011":
+        return run_40011_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
 
     if args.action == "diagnose-gimbal":
         return run_gimbal_diagnostics(args.port, args.baudrate, args.seconds, args.verbose)
