@@ -12,6 +12,7 @@ from mini3_gimbal_cal import (
     crc64_jones,
     crc8_header,
     describe_active_status_payload,
+    describe_auto_cal_status_payload,
     describe_ccode_payload,
     describe_camera_sensor_id_payload,
     describe_common_device_id_payload,
@@ -218,3 +219,9 @@ def test_builds_normal_auto_calibration_packet_with_empty_payload():
     assert frame.cmd_set == 4
     assert frame.cmd_id == 8
     assert frame.payload == b""
+
+
+def test_decodes_auto_calibration_status():
+    assert describe_auto_cal_status_payload(bytes.fromhex("64 00")) == "progress=100% status=0 (SUCCESS)"
+    assert describe_auto_cal_status_payload(bytes.fromhex("42 01")) == "progress=66% status=1 (CALIBRATING)"
+    assert "FAILED_OR_OTHER_2" in describe_auto_cal_status_payload(bytes.fromhex("19 02"))
