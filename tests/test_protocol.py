@@ -5,7 +5,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from mini3_gimbal_cal import (
+    ACK_AFTER_EXEC,
     CALIB_COMMANDS,
+    CMD_ID_GENERAL_REBOOT,
+    CMD_ID_GIMBAL_WRITE_IMU,
+    CMD_SET_GENERAL,
+    CMD_SET_ZENMUSE,
+    COMM_DEV_BATTERY,
+    COMM_DEV_GIMBAL,
+    IMU_FIX_SHORT_PAYLOAD,
     FrameReader,
     build_packet,
     crc16_duML,
@@ -237,3 +245,45 @@ def test_decodes_wm163_gimbal_check_status_40011_40021():
     desc = describe_gimbal_check_status_payload(bytes.fromhex("80 00 00 01"))
     assert "40011 CALIBRATE_ERROR" in desc
     assert "40021 IMU_DATA_DISMATCH" in desc
+
+
+def test_builds_recovered_wm163_40021_short_fix_packet():
+    pkt = build_packet(
+        seq=0x4000,
+        payload=IMU_FIX_SHORT_PAYLOAD,
+        receiver=COMM_DEV_GIMBAL,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
+    )
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.receiver == 4
+    assert frame.seq == 0x4000
+    assert frame.packet_type == 0
+    assert frame.ack_type == ACK_AFTER_EXEC
+    assert frame.encrypt_type == 0
+    assert frame.cmd_set == 0x04
+    assert frame.cmd_id == 0x36
+    assert frame.payload == bytes.fromhex("42 e9 7f 3f")
+
+
+def test_builds_recovered_wm163_40021_reboot_packet():
+    pkt = build_packet(
+        seq=0x4001,
+        payload=b"",
+        receiver=COMM_DEV_BATTERY,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=CMD_ID_GENERAL_REBOOT,
+    )
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.receiver == 11
+    assert frame.seq == 0x4001
+    assert frame.packet_type == 0
+    assert frame.ack_type == ACK_AFTER_EXEC
+    assert frame.encrypt_type == 0
+    assert frame.cmd_set == 0x00
+    assert frame.cmd_id == 0x0B
+    assert frame.payload == b""
