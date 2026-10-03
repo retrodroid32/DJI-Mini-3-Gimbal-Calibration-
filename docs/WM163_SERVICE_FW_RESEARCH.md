@@ -2167,3 +2167,39 @@ session_a returns normally
 ```
 
 This closes the previously listed transport-object lifetime/reuse blocker. Remaining high-value worker work is the exact public-version object supplied to the ARB gate and complete mapping of the worker's user-facing exception/error strings.
+
+
+## Service-firmware UI availability gate is not the ARB gate — 2026-10-03
+
+Reconstruction of `drgrey.service_fw.cp314-win_amd64.pyd` resolves an important policy distinction that had previously been conflated with the UI worker.
+
+The Cython compressed-name table contains 125 entries. Reconstructing its length table gives exact function argument names and separates the three relevant APIs.
+
+### Exact signatures
+
+```python
+arb_allows(service_version, drone_public_version)
+select_service_fw(model_code, drone_public_version, library=...)
+has_service_fw(model_code, library=...)
+```
+
+The `arb_allows` wrapper begins at `0x180002400`; the `select_service_fw` wrapper begins at `0x180002980`; and the `has_service_fw` wrapper begins at `0x180004700`.
+
+Critically, `has_service_fw` has **no `drone_public_version` parameter**. The UI-side `drgrey.ui.flasher` code calls `service_fw.has_service_fw(...)` while deciding Mini-3 flasher availability/visibility. That API can establish that the service-firmware library contains an entry for the normalized model, but it cannot by itself enforce anti-rollback compatibility.
+
+The recovered policy separation is therefore:
+
+```text
+has_service_fw(model_code, library)
+    -> catalog/availability check only
+
+arb_allows(service_version, drone_public_version)
+    -> version compatibility predicate
+
+select_service_fw(model_code, drone_public_version, library)
+    -> model-specific, ARB-aware image selection
+```
+
+For the guarded replacement flasher, do not treat `has_service_fw("WM163")` as sufficient authorization to write. A public-version-aware ARB check/selection step must remain explicit before service firmware is sent.
+
+This corrects the earlier idea that `_M3FlashWorker.run()` itself necessarily obtains a `device.public_version` and directly calls `arb_allows`. The remaining trace target is the source of the `drone_public_version` object at the actual `select_service_fw` call site.
