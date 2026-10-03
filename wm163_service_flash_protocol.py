@@ -120,3 +120,20 @@ def commit_hold_probe_command() -> EncodedCommand:
         seq=COMMIT_PROBE_SEQ,
         flags=FLAG_REQ_ACK,
     )
+
+
+def gray_order(files):
+    """Recovered DrGrey Session-B ordering helper.
+
+    Names without a _NNNN_ module marker sort first. Module-bearing names then
+    sort numerically by that four-digit module id.
+    """
+    import re
+
+    def key(name):
+        m = re.search(r"_(\d{4})_", name)
+        if m:
+            return (1, int(m.group(1)))
+        return (0, 0)
+
+    return sorted(files, key=key)
