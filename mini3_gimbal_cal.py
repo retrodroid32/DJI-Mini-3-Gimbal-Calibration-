@@ -298,6 +298,8 @@ def build_packet(
     payload: bytes,
     sender: int = COMM_DEV_PC,
     receiver: int = COMM_DEV_GIMBAL,
+    sender_index: int = 0,
+    receiver_index: int = 0,
     packet_type: int = PACKET_TYPE_REQUEST,
     ack_type: int = ACK_BEFORE_EXEC,
     encrypt_type: int = NO_ENCRYPTION,
@@ -315,8 +317,10 @@ def build_packet(
     out.append(SOF)
     out += ver_length.to_bytes(2, "little")
     out.append(crc8_header(bytes(out[:3])))
-    out.append(sender & 0x1F)
-    out.append(receiver & 0x1F)
+    if not 0 <= sender_index <= 7 or not 0 <= receiver_index <= 7:
+        raise ValueError("DUML device index must be in range 0..7")
+    out.append((sender & 0x1F) | ((sender_index & 0x07) << 5))
+    out.append((receiver & 0x1F) | ((receiver_index & 0x07) << 5))
     out += (seq & 0xFFFF).to_bytes(2, "little")
     out.append(cmd_type_data)
     out.append(cmd_set & 0xFF)
@@ -331,6 +335,8 @@ class DumlFrame:
     raw: bytes
     sender: int
     receiver: int
+    sender_index: int
+    receiver_index: int
     seq: int
     packet_type: int
     ack_type: int
@@ -369,6 +375,8 @@ def parse_frame(raw: bytes) -> DumlFrame:
         raw=raw,
         sender=raw[4] & 0x1F,
         receiver=raw[5] & 0x1F,
+        sender_index=(raw[4] >> 5) & 0x07,
+        receiver_index=(raw[5] >> 5) & 0x07,
         seq=int.from_bytes(raw[6:8], "little"),
         packet_type=(cmd_type_data >> 7) & 1,
         ack_type=(cmd_type_data >> 5) & 3,
@@ -430,9 +438,11 @@ def is_reply_to(
     seq: int,
     cmd_set: int,
     cmd_id: int,
+    sender_index: int = 0,
 ) -> bool:
     return (
         frame.sender == sender
+        and frame.sender_index == sender_index
         and frame.receiver == COMM_DEV_PC
         and frame.seq == seq
         and frame.packet_type == PACKET_TYPE_RESPONSE
@@ -728,6 +738,7 @@ def send_read_query(
     ser_obj,
     *,
     receiver: int,
+    receiver_index: int = 0,
     cmd_set: int,
     cmd_id: int,
     payload: bytes,
@@ -740,6 +751,7 @@ def send_read_query(
         seq=seq,
         payload=payload,
         receiver=receiver,
+        receiver_index=receiver_index,
         ack_type=ACK_AFTER_EXEC,
         cmd_set=cmd_set,
         cmd_id=cmd_id,
@@ -756,7 +768,14 @@ def send_read_query(
     deadline = time.monotonic() + timeout_seconds
     skipped = 0
     for frame in read_frames(ser_obj, reader, deadline):
-        if is_reply_to(frame, sender=receiver, seq=seq, cmd_set=cmd_set, cmd_id=cmd_id):
+        if is_reply_to(
+            frame,
+            sender=receiver,
+            sender_index=receiver_index,
+            seq=seq,
+            cmd_set=cmd_set,
+            cmd_id=cmd_id,
+        ):
             if verbose > 1:
                 print(f"{label} RX: {frame.hex}")
             return frame
@@ -766,6 +785,84 @@ def send_read_query(
     if verbose > 1 and skipped:
         print(f"{label}: ignored {skipped} unrelated DUML frame(s) while waiting for the reply")
     return None
+
+
+def describe_general_version_inquiry_payload(payload: bytes) -> str:
+    """Describe a DJI General/Version Inquiry (0x00/0x01) response."""
+    if len(payload) < 26:
+        return f"raw={payload.hex(' ')} (short payload)"
+    status0 = payload[0]
+    status1 = payload[1]
+    hw = _ascii_until_nul(payload[2:18])
+    ldr = int.from_bytes(payload[18:22], "little")
+    app = int.from_bytes(payload[22:26], "little")
+    extra = payload[26:]
+    parts = [
+        f"status=0x{status0:02x}/0x{status1:02x}",
+        f"hw={hw!r}",
+        f"loader=0x{ldr:08x}",
+        f"app=0x{app:08x}",
+    ]
+    if extra:
+        parts.append(f"extra={extra.hex(' ')}")
+    return ", ".join(parts)
+
+
+def run_service_fw_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
+    """Read-only WM163 service-firmware target/version probe.
+
+    Recovered DrGrey notes identify modules 0100, 0306 and 1100. In DJI module
+    addressing these map to device type/index pairs CAMERA.0, FLYC.6 and
+    BATTERY.0. This command only sends General/Version Inquiry (0x00/0x01).
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    targets = (
+        ("0100 CAMERA.0", COMM_DEV_CAMERA, 0),
+        ("0306 FLYC.6", COMM_DEV_FLYCONTROLLER, 6),
+        ("1100 BATTERY.0", COMM_DEV_BATTERY, 0),
+    )
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: READ-ONLY service-firmware target probe.")
+    print("Query: GENERAL 0x00/0x01 Version Inquiry only.")
+    print("Targets: 0100 CAMERA.0, 0306 FLYC.6, 1100 BATTERY.0.")
+    print("No firmware upload, calibration, factory-state change, serial write, or reboot is sent.")
+
+    responses = 0
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+            for label, device_type, device_index in targets:
+                frame = send_read_query(
+                    ser_obj,
+                    receiver=device_type,
+                    receiver_index=device_index,
+                    cmd_set=CMD_SET_GENERAL,
+                    cmd_id=0x01,
+                    payload=b"",
+                    timeout_seconds=timeout_seconds,
+                    verbose=verbose,
+                    label=label,
+                )
+                if frame is None:
+                    print(f"{label}: no matching response")
+                    continue
+                responses += 1
+                print(
+                    f"{label}: sender={frame.sender}.{frame.sender_index} "
+                    f"payload_len={len(frame.payload)} "
+                    f"{describe_general_version_inquiry_payload(frame.payload)}"
+                )
+    except Exception as exc:
+        if serial is not None and isinstance(exc, serial.SerialException):
+            print(f"ERROR: serial failure on {port}: {exc}", file=sys.stderr)
+            return 5
+        raise
+
+    return 0 if responses else 4
 
 
 def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
@@ -1516,6 +1613,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     flightlog.add_argument("path", help="path to DJIFlightRecord_*.txt")
 
+    service_probe = sub.add_parser(
+        "probe-service-fw",
+        help="read-only version inquiry for recovered WM163 service modules 0100/0306/1100",
+    )
+    service_probe.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    service_probe.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    service_probe.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=3.0,
+        help="per-module response timeout (default: 3 seconds)",
+    )
+
     identify = sub.add_parser(
         "identify",
         help="read-only WM163 aircraft/camera/gimbal identity probe for post-replacement diagnostics",
@@ -1661,6 +1771,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "flightlog-info":
         return run_flightlog_info(args.path)
+
+    if args.action == "probe-service-fw":
+        return run_service_fw_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
 
     if args.action == "identify":
         return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
