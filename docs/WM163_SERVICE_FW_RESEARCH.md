@@ -2203,3 +2203,35 @@ select_service_fw(model_code, drone_public_version, library)
 For the guarded replacement flasher, do not treat `has_service_fw("WM163")` as sufficient authorization to write. A public-version-aware ARB check/selection step must remain explicit before service firmware is sent.
 
 This corrects the earlier idea that `_M3FlashWorker.run()` itself necessarily obtains a `device.public_version` and directly calls `arb_allows`. The remaining trace target is the source of the `drone_public_version` object at the actual `select_service_fw` call site.
+
+
+## Correction: UI flasher does not expose a local public-version selector call — 2026-10-03
+
+Full reconstruction of the 334-entry Cython name table in `drgrey.ui.flasher` rules out an earlier inference about the Mini-3 UI worker.
+
+The UI extension contains names for `service_fw`, `has_service_fw`, `_model_code`, and `fetch_mini3_fw`, but it contains **none** of the following names:
+
+```text
+public_version
+drone_public_version
+arb_allows
+select_service_fw
+```
+
+Therefore the earlier description that `_M3FlashWorker.run()` obtains `_fl.device.public_version` and directly invokes `arb_allows("WM163", ...)` is not supported by this binary and should be treated as superseded.
+
+### Actual service-image download call
+
+In the native `m3_download_fw` path, the call to `fetch_mini3_fw` at `0x18000DDAC` constructs a one-element keyword-name tuple containing exactly:
+
+```text
+model
+```
+
+The vectorcall supplies two positional objects plus that `model=` keyword value. The exact semantic identities of the two positional objects are still being traced, so they are not asserted here.
+
+What is proven is that the UI module does not name or retrieve a `public_version` field at this call site, and it does not call the local `service_fw.select_service_fw`/`arb_allows` APIs by name.
+
+This leaves two plausible implementation layers for DrGrey's own product: the remote `fetch_mini3_fw` service may make the final image-policy decision, or the UI path may rely on a server-selected image after its model-only availability check. The binary evidence here does not distinguish those possibilities yet.
+
+For our replacement flasher, the safe consequence is unambiguous: retain an explicit local WM163 model guard and local ARB/public-version compatibility guard before any write rather than assuming the UI's `has_service_fw` or download path provides that protection.
