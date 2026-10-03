@@ -29,7 +29,12 @@ CMD_STREAM_B = 0x2A
 CMD_COMMIT_PROBE = 0x01
 
 SESSION_A_SEQ0 = 0x4900
-SESSION_A_LOADER_WAIT_SECONDS = 60
+SESSION_B_LOADER_WAIT_SECONDS = 180
+SESSION_B_LOADER_PROBE_SEQ0 = 0
+SESSION_B_LOADER_PROBE_XFER_TIMEOUT_MS = 4000
+SESSION_B_LOADER_PROBE_DRAIN_MS = 200
+SESSION_B_LOADER_PROBE_SLEEP_SECONDS = 2
+SESSION_B_LOADER_IDENTITY_MARKER = b"UAV"
 SESSION_B_SEQ0 = 0x3022
 SESSION_B_TIMEOUT_SECONDS = 180
 SESSION_B_DRAIN_EVERY_RECORDS = 64
@@ -116,6 +121,25 @@ def session_b_file_end_payload(blob: bytes) -> bytes:
 
 def session_b_finalize_payload() -> bytes:
     return b"\x00" * 17
+
+
+def session_b_loader_probe_command(seq: int) -> EncodedCommand:
+    """Recovered Session-B preflight probe used while waiting for the temp loader."""
+    if not 0 <= seq <= 0xFFFF:
+        raise ValueError("seq must fit uint16")
+    return EncodedCommand(
+        dst_raw=COMMIT_PROBE_DST_RAW,
+        cmd_set=CMDSET_GENERAL,
+        cmd_id=CMD_COMMIT_PROBE,
+        payload=b"",
+        seq=seq,
+        flags=FLAG_REQ_ACK,
+    )
+
+
+def loader_probe_identity_seen(xfer_bytes: bytes, drain_bytes: bytes) -> bool:
+    """DrGrey accepts the loader when raw xfer+drain bytes contain b'UAV'."""
+    return SESSION_B_LOADER_IDENTITY_MARKER in (bytes(xfer_bytes) + bytes(drain_bytes))
 
 
 def commit_hold_probe_command() -> EncodedCommand:
