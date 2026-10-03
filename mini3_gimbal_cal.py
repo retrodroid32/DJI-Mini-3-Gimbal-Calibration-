@@ -120,6 +120,9 @@ CALIB_COMMANDS = {
 # Recovered DrGrey WM163 service-calibration keepalives.
 # Protocol-only: live 40011 remains separately interlocked.
 AIRFORGE_FLYC_KEEPALIVE_SEQ = 0x3896
+AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS = 2000
+WM163_GIMBAL_KEEPALIVE_SEQ = 0x1249
+WM163_GIMBAL_KEEPALIVE_INTERVAL_MS = 3000
 WM163_GIMBAL_KEEPALIVE_PAYLOAD = bytes.fromhex(
     "e60143000000000000000008"
 )
@@ -356,8 +359,8 @@ def build_airforge_flyc_keepalive_packet() -> bytes:
     )
 
 
-def build_wm163_gimbal_keepalive_packet(seq: int) -> bytes:
-    """Recovered WM163 GIMBAL 0x04/0x12 keepalive; sequence kept explicit."""
+def build_wm163_gimbal_keepalive_packet(seq: int = WM163_GIMBAL_KEEPALIVE_SEQ) -> bytes:
+    """Exact recovered WM163 GIMBAL 0x04/0x12 keepalive builder."""
     return build_packet(
         seq=seq,
         payload=WM163_GIMBAL_KEEPALIVE_PAYLOAD,
