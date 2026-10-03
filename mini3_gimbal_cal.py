@@ -1062,13 +1062,18 @@ def run_fix_imu_40021_short(
                 print(f"REBOOT TX: {reboot_packet.hex(' ')}")
 
             written = ser_obj.write(reboot_packet)
-            ser_obj.flush()
             if written != len(reboot_packet):
                 print(
                     f"WARNING: only {written}/{len(reboot_packet)} reboot bytes were written.",
                     file=sys.stderr,
                 )
                 return 10
+            try:
+                ser_obj.flush()
+            except serial.SerialException:
+                # A disappearing virtual COM immediately after the complete reboot
+                # frame is expected behavior on some Windows/DJI service links.
+                print("Reboot frame was fully written; COM dropped while the aircraft rebooted.")
 
             print("Reboot command sent to BATTERY/PMU.")
             print("Wait for the aircraft to reboot completely, then reconnect COM and reread gimbal diagnostics.")
@@ -1078,10 +1083,6 @@ def run_fix_imu_40021_short(
     except Exception as exc:
         if serial is not None and isinstance(exc, serial.SerialException):
             print(f"ERROR: serial failure on {port}: {exc}", file=sys.stderr)
-            print(
-                "If this occurred after REBOOT TX, the COM device may have disappeared because the aircraft rebooted.",
-                file=sys.stderr,
-            )
             return 5
         raise
 
