@@ -12,8 +12,10 @@ from mini3_gimbal_cal import (
     crc64_jones,
     crc8_header,
     describe_active_status_payload,
+    decode_gimbal_check_status,
     describe_auto_cal_status_payload,
     describe_ccode_payload,
+    describe_gimbal_check_status_payload,
     describe_camera_sensor_id_payload,
     describe_common_device_id_payload,
     describe_fc_device_info_payload,
@@ -225,3 +227,13 @@ def test_decodes_auto_calibration_status():
     assert describe_auto_cal_status_payload(bytes.fromhex("64 00")) == "progress=100% status=0 (SUCCESS)"
     assert describe_auto_cal_status_payload(bytes.fromhex("42 01")) == "progress=66% status=1 (CALIBRATING)"
     assert "FAILED_OR_OTHER_2" in describe_auto_cal_status_payload(bytes.fromhex("19 02"))
+
+
+def test_decodes_wm163_gimbal_check_status_40011_40021():
+    value, active = decode_gimbal_check_status(bytes.fromhex("80 00 00 01"))
+    assert value == 0x01000080
+    assert (40011, "CALIBRATE_ERROR") in active
+    assert (40021, "IMU_DATA_DISMATCH") in active
+    desc = describe_gimbal_check_status_payload(bytes.fromhex("80 00 00 01"))
+    assert "40011 CALIBRATE_ERROR" in desc
+    assert "40021 IMU_DATA_DISMATCH" in desc
