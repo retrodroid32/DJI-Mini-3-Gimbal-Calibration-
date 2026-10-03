@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -807,6 +807,96 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
     return 0 if responses else 4
 
 
+def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int) -> int:
+    """Start DJI's normal gimbal auto-calibration and capture gimbal traffic.
+
+    Builder-verified DJI Fly request:
+      receiver GIMBAL(4), cmd_set 0x04, cmd_id 0x08, empty payload.
+    This is distinct from the older service-tool subcommands that reuse 0x08
+    with payload 01 (JointCoarse) or 02 (LinearHall).
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    seq = next_sequence()
+    packet = build_packet(
+        seq=seq,
+        payload=b"",
+        receiver=COMM_DEV_GIMBAL,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_CALIB,
+        ack_type=ACK_BEFORE_EXEC,
+    )
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Command: normal DJI gimbal Auto Calibration (0x04/0x08, empty payload)")
+    print(f"Capture window: {seconds:.1f} seconds")
+    print("This does NOT send JointCoarse, LinearHall, 0x04/0x68, or serial/pairing writes.")
+    if verbose:
+        print(f"TX: {packet.hex(' ')}")
+
+    reader = FrameReader()
+    counts: dict[tuple[int, int, int, int, bytes], int] = {}
+    total = 0
+    matched_reply = False
+
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        ser_obj.reset_input_buffer()
+        ser_obj.write(packet)
+        ser_obj.flush()
+
+        started = time.monotonic()
+        deadline = started + seconds
+        for frame in read_frames(ser_obj, reader, deadline):
+            if frame.sender != COMM_DEV_GIMBAL and frame.receiver != COMM_DEV_GIMBAL:
+                continue
+
+            total += 1
+            key = (frame.sender, frame.receiver, frame.cmd_set, frame.cmd_id, frame.payload)
+            counts[key] = counts.get(key, 0) + 1
+
+            if is_reply_to(
+                frame,
+                sender=COMM_DEV_GIMBAL,
+                seq=seq,
+                cmd_set=CMD_SET_ZENMUSE,
+                cmd_id=CMD_ID_GIMBAL_CALIB,
+            ):
+                matched_reply = True
+                print(
+                    "Auto-calibration reply: "
+                    + (describe_ccode_payload(frame.payload) if frame.payload else "empty payload")
+                )
+
+            if verbose:
+                elapsed = time.monotonic() - started
+                print(
+                    f"[{elapsed:6.2f}s] sender={frame.sender} receiver={frame.receiver} "
+                    f"set=0x{frame.cmd_set:02x} id=0x{frame.cmd_id:02x} "
+                    f"payload={frame.payload.hex(' ')}"
+                )
+            if verbose > 1:
+                print(f"  RAW: {frame.hex}")
+
+    print(f"Captured {total} gimbal-related DUML frame(s).")
+    if not matched_reply:
+        print("No sequence-matched 0x04/0x08 reply was observed.")
+    if counts:
+        print("Summary (count sender->receiver set/id payload):")
+        for (sender, receiver, cmd_set, cmd_id, payload), count in sorted(
+            counts.items(), key=lambda item: (-item[1], item[0][2], item[0][3])
+        ):
+            print(
+                f"{count:4d}  {sender}->{receiver}  "
+                f"0x{cmd_set:02x}/0x{cmd_id:02x}  {payload.hex(' ')}"
+            )
+    else:
+        print("No gimbal-related frames were observed.")
+    return 0
+
+
 def run_passive_gimbal_capture(port: str, baudrate: int, seconds: float, verbose: int) -> int:
     """Passively listen for DUML frames involving the gimbal. Sends no packets."""
     if serial is None:
@@ -990,6 +1080,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="per-query response timeout (default: 2.5 seconds)",
     )
 
+    auto_capture = sub.add_parser(
+        "auto-cal-capture",
+        help="start normal DJI gimbal auto-calibration over COM and capture resulting gimbal traffic",
+    )
+    auto_capture.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    auto_capture.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    auto_capture.add_argument(
+        "--seconds",
+        type=float,
+        default=60.0,
+        help="capture duration after starting auto calibration (default: 60)",
+    )
+    auto_capture.add_argument(
+        "--yes",
+        action="store_true",
+        help="required acknowledgement before starting gimbal auto calibration",
+    )
+
     capture = sub.add_parser(
         "capture-gimbal",
         help="passively capture DUML traffic to/from the gimbal without transmitting requests",
@@ -1033,6 +1141,16 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "capture-gimbal":
         return run_passive_gimbal_capture(args.port, args.baudrate, args.seconds, args.verbose)
+
+    if args.action == "auto-cal-capture":
+        if not args.yes:
+            parser.error(
+                "refusing to start gimbal auto calibration without --yes; "
+                "remove propellers and place the DJI Mini 3 / WM163 on a level surface"
+            )
+        print("WARNING: This starts DJI's normal gimbal Auto Calibration over the COM service link.")
+        print("Remove propellers and keep the aircraft stationary on a level surface.")
+        return run_auto_cal_capture(args.port, args.baudrate, args.seconds, args.verbose)
 
     if not args.yes:
         parser.error(
