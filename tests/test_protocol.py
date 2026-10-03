@@ -22,6 +22,7 @@ from mini3_gimbal_cal import (
     crc8_header,
     describe_active_status_payload,
     decode_gimbal_check_status,
+    decode_gimbal_imu_0x51_payload,
     describe_auto_cal_status_payload,
     describe_ccode_payload,
     describe_gimbal_check_status_payload,
@@ -308,3 +309,23 @@ def test_builds_read_only_wm163_gimbal_imu_probe_packet():
     assert frame.cmd_set == 0x04
     assert frame.cmd_id == 0x51
     assert frame.payload == b""
+
+
+def test_decodes_observed_wm163_0x51_layout():
+    payload = bytes.fromhex(
+        "00 f7 7f 3f 92 d6 da bb b5 79 78 bc "
+        "00 00 00 00 00 00 80 3f 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "f5 25 89 3a 91 31 16 3d ac e5 02 3c "
+        "41 b4 99 3c 7f 36 2e ba 80 99 9c bc "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "52 02 3c"
+    )
+    values, trailer = decode_gimbal_imu_0x51_payload(payload)
+    assert len(values) == 24
+    assert abs(values[0] - 0.9998626708984375) < 1e-9
+    assert abs(values[1] - (-0.006678410805761814)) < 1e-12
+    assert values[4] == 1.0
+    assert trailer == bytes.fromhex("52 02 3c")
