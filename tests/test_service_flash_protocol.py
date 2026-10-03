@@ -171,6 +171,9 @@ def test_recovered_sequence_defaults_and_drain_cadence():
         SESSION_B_DRAIN_EVERY_RECORDS,
         SESSION_B_PERIODIC_DRAIN_MS,
         SESSION_B_FINAL_DRAIN_MS,
+        SESSION_B_WRITE_WINDOW_MS,
+        SESSION_B_WRITE_READ_TIMEOUT_MS,
+        ENGINE_DRAIN_READ_TIMEOUT_MS,
     )
 
     assert SESSION_A_SEQ0 == 0x4900
@@ -179,6 +182,9 @@ def test_recovered_sequence_defaults_and_drain_cadence():
     assert SESSION_B_DRAIN_EVERY_RECORDS == 64
     assert SESSION_B_PERIODIC_DRAIN_MS == 15
     assert SESSION_B_FINAL_DRAIN_MS == 300
+    assert SESSION_B_WRITE_WINDOW_MS == 0
+    assert SESSION_B_WRITE_READ_TIMEOUT_MS == 1
+    assert ENGINE_DRAIN_READ_TIMEOUT_MS == 40
 
 
 def test_recovered_sequence_helpers_match_known_transfers():
