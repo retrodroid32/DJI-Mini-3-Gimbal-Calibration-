@@ -2489,3 +2489,38 @@ At the Session-B periodic `drain(15)` and iterator-end `drain(300)` call sites, 
 Likewise, after a normal custom-0x2A `write()` return, Session B discards that return object and advances the shared 16-bit sequence. There is no additional per-record ACK-content predicate at this call site.
 
 This confirms the custom Session-B stream is exception-gated at the `write`/`drain` wrapper layer rather than lockstep ACK-content-gated. The lower-level contract of the transport object's `send_and_collect` implementation remains a separate layer if exact transport internals are needed later.
+
+
+## Lower serial write contract recovered — 2026-10-03
+
+The remaining short-write question behind `EngineTransport.write()` is resolved by tracing `drgrey.transport.SerialTransport.send_and_collect` in `transport.cp314-win_amd64.pyd`.
+
+The Cython wrapper exposes the relevant `send_and_collect` parameters as `self`, `data`, `read_len`, `window_ms`, and `read_timeout_ms`. The WM163 `EngineTransport.write` path supplies the packet plus `window_ms=0` and `read_timeout_ms=1`.
+
+Inside the SerialTransport native body, DrGrey retrieves `self.ser`, resolves its `write` attribute, and invokes the equivalent of:
+
+```python
+self.ser.write(data)
+```
+
+The Python object returned by that call is only checked for normal call completion, then decreferenced/discarded. It is not converted to an integer and is not compared with `len(data)`.
+
+The code then resolves the same serial object's `flush` method and invokes the equivalent of:
+
+```python
+self.ser.flush()
+```
+
+Again, normal completion is required and exceptions propagate through the transport error path.
+
+Therefore there is no additional short-write count validation in either layer recovered so far:
+
+```text
+Session-B 0x2A call site
+  -> EngineTransport.write(frame)
+      -> tp.send_and_collect(frame, window_ms=0, read_timeout_ms=1)
+          -> ser.write(frame)     # returned count discarded
+          -> ser.flush()
+```
+
+The recovered implementation relies on normal completion/exception behavior rather than checking the numeric return from `serial.write`. A guarded replacement may choose to enforce a stricter full-write invariant, but doing so would be an intentional safety hardening rather than an exact reproduction of this DrGrey behavior.
