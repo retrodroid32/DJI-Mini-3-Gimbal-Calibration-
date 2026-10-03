@@ -278,3 +278,23 @@ v0.9.0 adds `auto-cal-capture` for Mini 3 units whose USB service boot prevents
 a simultaneous normal controller/DJI Fly connection. It starts only the normal
 auto-calibration request and then captures gimbal traffic. It does not guess the
 payload for name-only `0x04/0x68 uav_gimbal_cali_data_exist_req`.
+
+
+## WM163 normal Auto Calibration success capture
+
+A live Mini 3 / WM163 capture of the builder-verified empty-payload
+`0x04/0x08` request returned an immediate successful command acknowledgement
+and then `0x04/0x30` AutoCalibrationStatus pushes.
+
+DJI's `DataGimbalGetPushAutoCalibrationStatus` reads:
+
+- byte 0: progress
+- byte 1: status
+
+DJI SDK abstraction logic treats status 1 as calibrating, status 0 as calibration
+successful, and any other status as not successful. The WM163 capture reached
+`64 00` (100%, success) at about 18 seconds.
+
+No `0x04/0x68 uav_gimbal_cali_data_exist_req/rsp` traffic was observed during
+the normal Auto Calibration capture, so that name-only command is not assumed to
+be part of the normal calibration path.
