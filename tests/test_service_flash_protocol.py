@@ -235,3 +235,12 @@ def test_recovered_session_b_loader_probe():
     assert loader_probe_identity_seen(b"prefix WM163 ", b"UAV suffix")
     assert loader_probe_identity_seen(b"UAV", b"")
     assert not loader_probe_identity_seen(b"WM163", b"")
+
+
+def test_loader_probe_first_packet_matches_commit_probe_fields():
+    from wm163_service_flash_protocol import (
+        session_b_loader_probe_command,
+        commit_hold_probe_command,
+    )
+
+    assert session_b_loader_probe_command(0) == commit_hold_probe_command()
