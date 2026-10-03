@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.11.1"
+VERSION = "0.12.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -37,11 +37,13 @@ COMM_DEV_CAMERA = 1
 COMM_DEV_FLYCONTROLLER = 3
 COMM_DEV_GIMBAL = 4
 COMM_DEV_PC = 10
+COMM_DEV_BATTERY = 11
 
 CMD_SET_GENERAL = 0
 CMD_SET_FLYCONTROLLER = 3
 CMD_SET_ZENMUSE = 4
 
+CMD_ID_GENERAL_REBOOT = 0x0B
 CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
 CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_GENERAL_PUSH_CHECK_STATUS = 0xF1
@@ -49,6 +51,7 @@ CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
 CMD_ID_GIMBAL_AUTO_CAL_STATUS = 0x30
+CMD_ID_GIMBAL_WRITE_IMU = 0x36
 CMD_ID_CAMERA_GET_SENSOR_ID = 0xB5
 
 PACKET_TYPE_REQUEST = 0
@@ -108,6 +111,11 @@ CALIB_COMMANDS = {
     "joint-coarse": 0x01,
     "linear-hall": 0x02,
 }
+
+# Recovered from DrGrey 1.5.2 static constants. Its embedded documentation
+# identifies this exact four-byte form as bank-confirmed on WM163 with active
+# 40021. Do not substitute the unrelated 168-byte/model-specific 0x36 payload.
+IMU_FIX_SHORT_PAYLOAD = bytes.fromhex("42 e9 7f 3f")
 
 # Legacy completion values used by o-gs/dji-firmware-tools on older DJI gimbals.
 # WM163 may use a different progress format, so these are treated as hints only.
@@ -925,6 +933,159 @@ def run_gimbal_diagnostics(port: str, baudrate: int, seconds: float, verbose: in
     return 0
 
 
+def run_fix_imu_40021_short(
+    port: str,
+    baudrate: int,
+    precheck_seconds: float,
+    reply_timeout_seconds: float,
+    verbose: int,
+) -> int:
+    """Run the recovered WM163 short repair for gimbal diagnostic 40021.
+
+    Flow recovered from DrGrey 1.5.2:
+      1) require an active gimbal check-status bit 7 / 40021
+      2) GIMBAL 0x04/0x36 payload 42 e9 7f 3f
+      3) require the sequence-matched EMPTY response payload
+      4) GENERAL 0x00/0x0B to BATTERY/PMU with empty payload to reboot
+
+    The DrGrey USB capture shows its normal command transport uses ACK_AFTER_EXEC.
+    This function deliberately does not send the 168-byte 0x36 matrix or the
+    beta 0x51 -> 0x36 -> 0x68 read/push/save flow.
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Repair: bank-recovered short 40021 IMU fix")
+    print(f"Write: GIMBAL 0x04/0x36 payload {IMU_FIX_SHORT_PAYLOAD.hex(' ')}")
+    print("Success gate: exact sequence-matched EMPTY ACK before reboot")
+    print("Reboot: GENERAL 0x00/0x0B to BATTERY/PMU")
+    print("The 168-byte 0x36 matrix and beta 0x68 save flow are NOT used.")
+
+    reader = FrameReader()
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+            ser_obj.reset_input_buffer()
+
+            print(f"Precheck: listening up to {precheck_seconds:.1f}s for active 40021...")
+            deadline = time.monotonic() + precheck_seconds
+            saw_check = False
+            saw_40021 = False
+            last_check: Optional[bytes] = None
+            for frame in read_frames(ser_obj, reader, deadline):
+                if (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_GENERAL
+                    and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
+                    and len(frame.payload) >= 4
+                ):
+                    saw_check = True
+                    last_check = frame.payload
+                    value, _active = decode_gimbal_check_status(frame.payload)
+                    if verbose:
+                        print(
+                            f"Precheck status: payload={frame.payload.hex(' ')}  "
+                            f"{describe_gimbal_check_status_payload(frame.payload)}"
+                        )
+                    if value & (1 << 7):
+                        saw_40021 = True
+                        break
+
+            if not saw_check:
+                print("REFUSED: no gimbal 0x00/0xF1 check-status push was observed.", file=sys.stderr)
+                print("No write was sent.", file=sys.stderr)
+                return 6
+            if not saw_40021:
+                print(
+                    "REFUSED: diagnostic 40021 IMU_DATA_DISMATCH was not active"
+                    + (f" (last status {last_check.hex(' ')})" if last_check else "")
+                    + ".",
+                    file=sys.stderr,
+                )
+                print("No write was sent.", file=sys.stderr)
+                return 7
+
+            seq = next_sequence()
+            fix_packet = build_packet(
+                seq=seq,
+                payload=IMU_FIX_SHORT_PAYLOAD,
+                receiver=COMM_DEV_GIMBAL,
+                ack_type=ACK_AFTER_EXEC,
+                cmd_set=CMD_SET_ZENMUSE,
+                cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
+            )
+            if verbose:
+                print(f"FIX TX: {fix_packet.hex(' ')}")
+            ser_obj.write(fix_packet)
+            ser_obj.flush()
+
+            fix_reply: Optional[DumlFrame] = None
+            deadline = time.monotonic() + reply_timeout_seconds
+            for frame in read_frames(ser_obj, reader, deadline):
+                if is_reply_to(
+                    frame,
+                    sender=COMM_DEV_GIMBAL,
+                    seq=seq,
+                    cmd_set=CMD_SET_ZENMUSE,
+                    cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
+                ):
+                    fix_reply = frame
+                    if verbose:
+                        print(f"FIX RX: {frame.hex}")
+                    break
+
+            if fix_reply is None:
+                print("REFUSED TO REBOOT: no matching 0x04/0x36 reply was received.", file=sys.stderr)
+                return 8
+            if fix_reply.payload != b"":
+                print(
+                    "REFUSED TO REBOOT: recovered WM163 flow expects an EMPTY 0x04/0x36 ACK; "
+                    f"received payload={fix_reply.payload.hex(' ')}.",
+                    file=sys.stderr,
+                )
+                return 9
+
+            print("0x04/0x36 accepted: received the expected empty ACK.")
+
+            reboot_seq = next_sequence()
+            reboot_packet = build_packet(
+                seq=reboot_seq,
+                payload=b"",
+                receiver=COMM_DEV_BATTERY,
+                ack_type=ACK_AFTER_EXEC,
+                cmd_set=CMD_SET_GENERAL,
+                cmd_id=CMD_ID_GENERAL_REBOOT,
+            )
+            if verbose:
+                print(f"REBOOT TX: {reboot_packet.hex(' ')}")
+
+            written = ser_obj.write(reboot_packet)
+            ser_obj.flush()
+            if written != len(reboot_packet):
+                print(
+                    f"WARNING: only {written}/{len(reboot_packet)} reboot bytes were written.",
+                    file=sys.stderr,
+                )
+                return 10
+
+            print("Reboot command sent to BATTERY/PMU.")
+            print("Wait for the aircraft to reboot completely, then reconnect COM and reread gimbal diagnostics.")
+            print("40021 must be verified after reconnect; 40011 may remain as a separate service-calibration fault.")
+            return 0
+
+    except Exception as exc:
+        if serial is not None and isinstance(exc, serial.SerialException):
+            print(f"ERROR: serial failure on {port}: {exc}", file=sys.stderr)
+            print(
+                "If this occurred after REBOOT TX, the COM device may have disappeared because the aircraft rebooted.",
+                file=sys.stderr,
+            )
+            return 5
+        raise
+
+
 def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int) -> int:
     """Start DJI's normal gimbal auto-calibration and capture gimbal traffic.
 
@@ -1250,6 +1411,36 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="passive diagnostic capture duration (default: 5)",
     )
 
+    fix_40021 = sub.add_parser(
+        "fix-imu-40021-short",
+        help="run the bank-recovered WM163 short repair for gimbal IMU diagnostic 40021",
+    )
+    fix_40021.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    fix_40021.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    fix_40021.add_argument(
+        "--precheck-seconds",
+        type=float,
+        default=5.0,
+        help="time to require an active 40021 check-status bit before writing (default: 5)",
+    )
+    fix_40021.add_argument(
+        "--reply-timeout-seconds",
+        type=float,
+        default=2.0,
+        help="time to wait for the exact empty 0x04/0x36 ACK (default: 2)",
+    )
+    fix_40021.add_argument(
+        "--yes",
+        action="store_true",
+        help="required acknowledgement before writing the WM163 IMU repair value and rebooting",
+    )
+
+    dry_fix = sub.add_parser(
+        "dry-run-40021",
+        help="build the recovered WM163 40021 short-fix and reboot packets without touching hardware",
+    )
+    dry_fix.add_argument("--seq", type=lambda s: int(s, 0), default=0x4000)
+
     auto_capture = sub.add_parser(
         "auto-cal-capture",
         help="start normal DJI gimbal auto-calibration over COM and capture resulting gimbal traffic",
@@ -1303,6 +1494,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.action == "replay":
         return replay_frames(args.command, args.frames)
 
+    if args.action == "dry-run-40021":
+        fix_packet = build_packet(
+            seq=args.seq,
+            payload=IMU_FIX_SHORT_PAYLOAD,
+            receiver=COMM_DEV_GIMBAL,
+            ack_type=ACK_AFTER_EXEC,
+            cmd_set=CMD_SET_ZENMUSE,
+            cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
+        )
+        reboot_packet = build_packet(
+            seq=(args.seq + 1) & 0xFFFF,
+            payload=b"",
+            receiver=COMM_DEV_BATTERY,
+            ack_type=ACK_AFTER_EXEC,
+            cmd_set=CMD_SET_GENERAL,
+            cmd_id=CMD_ID_GENERAL_REBOOT,
+        )
+        print(f"FIX:    {fix_packet.hex(' ')}")
+        print(f"REBOOT: {reboot_packet.hex(' ')}")
+        return 0
+
     if args.action == "flightlog-info":
         return run_flightlog_info(args.path)
 
@@ -1324,6 +1536,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("WARNING: This starts DJI's normal gimbal Auto Calibration over the COM service link.")
         print("Remove propellers and keep the aircraft stationary on a level surface.")
         return run_auto_cal_capture(args.port, args.baudrate, args.seconds, args.verbose)
+
+    if args.action == "fix-imu-40021-short":
+        if not args.yes:
+            parser.error(
+                "refusing to write the recovered 40021 repair value without --yes; "
+                "verify the aircraft is DJI Mini 3 / WM163 and remove the propellers"
+            )
+        print("WARNING: This writes gimbal IMU service data and then reboots the aircraft.")
+        print("Use only on DJI Mini 3 / WM163 with active diagnostic 40021.")
+        print("Remove propellers and do not disconnect USB until the reboot command is sent.")
+        return run_fix_imu_40021_short(
+            args.port,
+            args.baudrate,
+            args.precheck_seconds,
+            args.reply_timeout_seconds,
+            args.verbose,
+        )
 
     if not args.yes:
         parser.error(
