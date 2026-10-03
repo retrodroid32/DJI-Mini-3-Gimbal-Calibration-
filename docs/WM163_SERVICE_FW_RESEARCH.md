@@ -2702,3 +2702,62 @@ The transport-agnostic implementation now exposes
 `ctrl_ack_payload_accepted(payload)` so a future guarded flasher can fail
 closed on an explicit non-zero control status without enabling any live write
 path.
+
+
+## Session-B pipeline abort / FINALIZE boundary recovered — 2026-10-03
+
+Static control-flow tracing resolves the error boundary between the custom
+`0x2A` file stream and `B/FINALIZE`.
+
+The recovered Session-B order is:
+
+```text
+B/ENTER via _ctrl
+B/REPORT_SIZE via _ctrl
+
+for each START/DATA/END 0x2A record:
+    transport.write(...)
+    if record_count % 64 == 0:
+        transport.drain(15)
+
+iterator exhausted
+    -> transport.drain(300)
+
+only after that call returns normally:
+    -> B/FINALIZE via _ctrl
+```
+
+There is no Session-B-local exception handler that converts failures from the
+custom stream writes or drains into success. A Python exception/NULL return
+from any of these calls propagates through the Cython function's error cleanup
+and prevents the later FINALIZE call:
+
+- custom `0x2A` `transport.write(...)`
+- periodic `transport.drain(15)`
+- terminal `transport.drain(300)`
+
+A **normal** drain return is sufficient even when the returned bytes are empty.
+The Session-B call sites do not parse or ACK-match the bytes returned by those
+drains.
+
+Therefore the exact transition condition is:
+
+```python
+stream iterator exhausted
+and terminal drain(300) returned normally
+    -> FINALIZE may be attempted
+```
+
+This is now represented offline by
+`session_b_finalize_gate(stream_exhausted=..., final_drain_completed=...)`.
+
+`B/FINALIZE` itself is not fire-and-forget. It uses the recovered `_ctrl`
+path with command `0x0A`, 17 zero payload bytes, destination `0x01`, and
+the current shared sequence. Consequently it requires a matching response
+(command id + response flag + sequence), and the matched control ACK must have
+either no payload status byte or a leading `0x00`. A non-zero leading status
+is an explicit device-side rejection.
+
+This means a guarded implementation must **not** attempt FINALIZE after any
+stream/write/drain exception, and must **not** interpret a non-zero FINALIZE
+status as success.
