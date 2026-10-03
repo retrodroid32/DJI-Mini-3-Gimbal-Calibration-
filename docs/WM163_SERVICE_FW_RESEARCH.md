@@ -147,3 +147,40 @@ The following must be recovered from `Flasher._ctrl` and `Flasher._stream` befor
 14. Full validation rules for `mini3_service.bin` (model, manifest, module table, sizes, MD5, IM*H headers)
 
 No live service-firmware flashing should be added until these are decoded and tested offline.
+
+
+## Native entry-point map recovered from the Cython method table
+
+The PE method table for `drgrey.mini3_service_flash.cp314-win_amd64.pyd` resolves the relevant Python-visible methods to these native implementations:
+
+- `encode` -> `0x180002960`
+- `Frame.is_response` -> `0x180004180`
+- `decode_all` -> `0x1800044C0`
+- `match_ack` -> `0x180006450`
+- `EngineTransport.xfer` -> `0x1800074E0`
+- `EngineTransport.write` -> `0x180007B90`
+- `EngineTransport.drain` -> `0x180008130`
+- `Flasher._ctrl` -> `0x1800090B0`
+- `Flasher._stream` -> `0x18000A980`
+- `Flasher.session_a` -> `0x18000BCE0`
+- `Flasher.session_b` -> `0x18000DCD0`
+- `Flasher._hold_for_commit` -> `0x180012F20`
+- `load_loader` -> `0x1800148D0`
+
+This mapping comes from direct PE string-pointer/method-table xrefs and is stronger than proximity-based disassembly guesses.
+
+### Additional native observations
+
+`Flasher.session_a` contains repeated immediate use of `0xA9`, which independently corroborates the recovered Session-A node value.
+
+`Flasher.session_b` contains an immediate `0x01` late in the flow, but this alone is not enough to assign semantic meaning without tracing the surrounding Python object construction.
+
+A `0x80` immediate also appears in `session_b`; its current use is not proven to be the firmware chunk size. Do not label it as `CHUNK=0x80` until the call target and argument semantics are decoded.
+
+The current reverse-engineering priority is therefore:
+
+1. decode `match_ack` field comparisons;
+2. decode `EngineTransport.xfer` request/response contract;
+3. trace the values constructed by `_ctrl`;
+4. identify the slice/packing operation inside `_stream`;
+5. only then assign chunk size, offset/index header and finalize payload semantics.
