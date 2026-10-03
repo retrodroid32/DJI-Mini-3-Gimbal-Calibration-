@@ -43,15 +43,19 @@ CMD_SET_GENERAL = 0
 CMD_SET_FLYCONTROLLER = 3
 CMD_SET_ZENMUSE = 4
 
+CMD_ID_GENERAL_KEEPALIVE = 0x01
 CMD_ID_GENERAL_REBOOT = 0x0B
 CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
+CMD_ID_GENERAL_GET_CFG_FILE = 0x4F
 CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_GENERAL_PUSH_CHECK_STATUS = 0xF1
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
+CMD_ID_GIMBAL_KEEPALIVE = 0x12
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
 CMD_ID_GIMBAL_AUTO_CAL_STATUS = 0x30
 CMD_ID_GIMBAL_WRITE_IMU = 0x36
+CMD_ID_GIMBAL_READ_IMU = 0x51
 CMD_ID_CAMERA_GET_SENSOR_ID = 0xB5
 
 PACKET_TYPE_REQUEST = 0
@@ -111,6 +115,17 @@ CALIB_COMMANDS = {
     "joint-coarse": 0x01,
     "linear-hall": 0x02,
 }
+
+
+# Recovered DrGrey WM163 service-calibration keepalives.
+# Protocol-only: live 40011 remains separately interlocked.
+AIRFORGE_FLYC_KEEPALIVE_SEQ = 0x3896
+AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS = 2000
+WM163_GIMBAL_KEEPALIVE_SEQ = 0x1249
+WM163_GIMBAL_KEEPALIVE_INTERVAL_MS = 3000
+WM163_GIMBAL_KEEPALIVE_PAYLOAD = bytes.fromhex(
+    "e60143000000000000000008"
+)
 
 # Recovered from DrGrey 1.5.2 static constants. Its embedded documentation
 # identifies this exact four-byte form as bank-confirmed on WM163 with active
@@ -297,6 +312,8 @@ def build_packet(
     payload: bytes,
     sender: int = COMM_DEV_PC,
     receiver: int = COMM_DEV_GIMBAL,
+    sender_index: int = 0,
+    receiver_index: int = 0,
     packet_type: int = PACKET_TYPE_REQUEST,
     ack_type: int = ACK_BEFORE_EXEC,
     encrypt_type: int = NO_ENCRYPTION,
@@ -314,8 +331,10 @@ def build_packet(
     out.append(SOF)
     out += ver_length.to_bytes(2, "little")
     out.append(crc8_header(bytes(out[:3])))
-    out.append(sender & 0x1F)
-    out.append(receiver & 0x1F)
+    if not 0 <= sender_index <= 7 or not 0 <= receiver_index <= 7:
+        raise ValueError("DUML device index must be in range 0..7")
+    out.append((sender & 0x1F) | ((sender_index & 0x07) << 5))
+    out.append((receiver & 0x1F) | ((receiver_index & 0x07) << 5))
     out += (seq & 0xFFFF).to_bytes(2, "little")
     out.append(cmd_type_data)
     out.append(cmd_set & 0xFF)
@@ -325,11 +344,69 @@ def build_packet(
     return bytes(out)
 
 
+def build_airforge_flyc_keepalive_packet() -> bytes:
+    """Exact recovered AirForge FLYC keepalive used by DrGrey."""
+    return build_packet(
+        seq=AIRFORGE_FLYC_KEEPALIVE_SEQ,
+        payload=b"",
+        sender=COMM_DEV_PC,
+        sender_index=1,
+        receiver=COMM_DEV_FLYCONTROLLER,
+        receiver_index=0,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=CMD_ID_GENERAL_KEEPALIVE,
+    )
+
+
+def build_wm163_gimbal_keepalive_packet(seq: int = WM163_GIMBAL_KEEPALIVE_SEQ) -> bytes:
+    """Exact recovered WM163 GIMBAL 0x04/0x12 keepalive builder."""
+    return build_packet(
+        seq=seq,
+        payload=WM163_GIMBAL_KEEPALIVE_PAYLOAD,
+        sender=COMM_DEV_PC,
+        sender_index=0,
+        receiver=COMM_DEV_GIMBAL,
+        receiver_index=0,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_KEEPALIVE,
+    )
+
+
+def service_keepalives_due(
+    elapsed_ms: int,
+    *,
+    last_flyc_ms: int,
+    last_gimbal_ms: int,
+    flyc_enabled: bool = True,
+    gimbal_payload: bytes | None = WM163_GIMBAL_KEEPALIVE_PAYLOAD,
+) -> tuple[bool, bool]:
+    """Recovered DrGrey monitor cadence decision, transport-free.
+
+    The monitor sends the AirForge FLYC keepalive when at least 2000 ms have
+    elapsed since the previous FLYC keepalive and sends the Mini-3 gimbal
+    0x04/0x12 keepalive when at least 3000 ms have elapsed since the previous
+    gimbal keepalive.  A missing/empty gimbal payload disables that side.
+    """
+    flyc_due = bool(
+        flyc_enabled
+        and elapsed_ms - last_flyc_ms >= AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS
+    )
+    gimbal_due = bool(
+        gimbal_payload
+        and elapsed_ms - last_gimbal_ms >= WM163_GIMBAL_KEEPALIVE_INTERVAL_MS
+    )
+    return flyc_due, gimbal_due
+
+
 @dataclasses.dataclass(frozen=True)
 class DumlFrame:
     raw: bytes
     sender: int
     receiver: int
+    sender_index: int
+    receiver_index: int
     seq: int
     packet_type: int
     ack_type: int
@@ -368,6 +445,8 @@ def parse_frame(raw: bytes) -> DumlFrame:
         raw=raw,
         sender=raw[4] & 0x1F,
         receiver=raw[5] & 0x1F,
+        sender_index=(raw[4] >> 5) & 0x07,
+        receiver_index=(raw[5] >> 5) & 0x07,
         seq=int.from_bytes(raw[6:8], "little"),
         packet_type=(cmd_type_data >> 7) & 1,
         ack_type=(cmd_type_data >> 5) & 3,
@@ -429,9 +508,11 @@ def is_reply_to(
     seq: int,
     cmd_set: int,
     cmd_id: int,
+    sender_index: int = 0,
 ) -> bool:
     return (
         frame.sender == sender
+        and frame.sender_index == sender_index
         and frame.receiver == COMM_DEV_PC
         and frame.seq == seq
         and frame.packet_type == PACKET_TYPE_RESPONSE
@@ -451,6 +532,224 @@ def _ascii_until_nul(data: bytes) -> str:
     if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in text):
         return ""
     return text
+
+
+@dataclasses.dataclass(frozen=True)
+class AircraftFirmwareManifest:
+    device: str
+    formal: str
+    release: str
+    antirollback: str
+    antirollback_ext: str
+    enforce: str
+    enforce_time: str
+    modules: tuple[tuple[str, str, str], ...]
+
+
+def build_cfg_manifest_read_payload(offset: int, max_bytes: int = 1000) -> bytes:
+    """Build the recovered General 0x00/0x4F read-only cfg-file request.
+
+    Wire payload: op=1, uint32_le offset, uint32_le max requested bytes.
+    """
+    if not 0 <= offset <= 0xFFFFFFFF:
+        raise ValueError("cfg manifest offset is out of uint32 range")
+    if not 1 <= max_bytes <= 0xFFFFFFFF:
+        raise ValueError("cfg manifest max_bytes is out of uint32 range")
+    return struct.pack("<BII", 1, offset, max_bytes)
+
+
+def parse_cfg_manifest_reply(payload: bytes) -> tuple[int, int, bytes]:
+    """Parse a General 0x00/0x4F response.
+
+    Response payload: status:u8, chunk_len:u32 LE, remaining:u32 LE, data.
+    """
+    if len(payload) < 9:
+        raise ValueError("cfg manifest reply is shorter than 9-byte header")
+    status = payload[0]
+    chunk_len = int.from_bytes(payload[1:5], "little")
+    remaining = int.from_bytes(payload[5:9], "little")
+    data = payload[9:]
+    if chunk_len > len(data):
+        raise ValueError(
+            f"cfg manifest reply chunk length {chunk_len} exceeds available {len(data)}"
+        )
+    return status, remaining, data[:chunk_len]
+
+
+def parse_aircraft_cfg_manifest(blob: bytes) -> AircraftFirmwareManifest:
+    """Extract the clear XML from the aircraft's signed cfg.sig container."""
+    import re
+
+    start = blob.find(b"<?xml")
+    end = blob.rfind(b"</dji>")
+    if start < 0 or end < 0:
+        raise ValueError("cfg manifest read does not contain complete DJI XML")
+    xml = blob[start : end + len(b"</dji>")].decode("utf-8", errors="strict")
+
+    def attr(tag_pattern: str, name: str) -> str:
+        m = re.search(tag_pattern, xml, flags=re.S)
+        if not m:
+            return ""
+        attrs = m.group(1)
+        a = re.search(rf'\b{name}="([^"]*)"', attrs)
+        return a.group(1) if a else ""
+
+    device = attr(r"<device\s+([^>]*)>", "id")
+    formal = attr(r"<firmware\s+([^>]*)>", "formal")
+    release = attr(r"<release\s+([^>]*)>", "version")
+    antirollback = attr(r"<release\s+([^>]*)>", "antirollback")
+    antirollback_ext = attr(r"<release\s+([^>]*)>", "antirollback_ext")
+    enforce = attr(r"<release\s+([^>]*)>", "enforce")
+    enforce_time = attr(r"<release\s+([^>]*)>", "enforce_time")
+
+    modules = []
+    for m in re.finditer(r"<module\s+([^>]*)>([^<]*)</module>", xml, flags=re.S):
+        attrs, filename = m.groups()
+        mid = re.search(r'\bid="([^"]*)"', attrs)
+        ver = re.search(r'\bversion="([^"]*)"', attrs)
+        modules.append(
+            (
+                mid.group(1) if mid else "",
+                ver.group(1) if ver else "",
+                filename.strip(),
+            )
+        )
+
+    return AircraftFirmwareManifest(
+        device=device,
+        formal=formal,
+        release=release,
+        antirollback=antirollback,
+        antirollback_ext=antirollback_ext,
+        enforce=enforce,
+        enforce_time=enforce_time,
+        modules=tuple(modules),
+    )
+
+
+def run_fw_manifest_probe(
+    port: str,
+    baudrate: int,
+    timeout_seconds: float,
+    verbose: int,
+    *,
+    max_bytes: int = 65536,
+) -> int:
+    """Read the installed WM163 cfg.sig manifest over General 0x00/0x4F.
+
+    This is read-only. It does not enter factory mode and does not write
+    firmware or calibration data.
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    receiver = COMM_DEV_CAMERA
+    receiver_index = 0
+    request_max = 1000
+    offset = 0
+    out = bytearray()
+    reader = FrameReader()
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: READ-ONLY installed firmware manifest (General 0x00/0x4F).")
+    print("Target: CAMERA.0 / device 1 index 0 (recovered WM163 responder).")
+
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        ser_obj.reset_input_buffer()
+
+        while len(out) < max_bytes:
+            seq = next_sequence()
+            payload = build_cfg_manifest_read_payload(offset, request_max)
+            packet = build_packet(
+                seq=seq,
+                payload=payload,
+                receiver=receiver,
+                receiver_index=receiver_index,
+                ack_type=ACK_AFTER_EXEC,
+                cmd_set=CMD_SET_GENERAL,
+                cmd_id=CMD_ID_GENERAL_GET_CFG_FILE,
+            )
+            if verbose:
+                print(f"TX offset={offset}: {packet.hex(' ')}")
+            ser_obj.write(packet)
+            ser_obj.flush()
+
+            deadline = time.monotonic() + timeout_seconds
+            matched = None
+            for frame in read_frames(ser_obj, reader, deadline):
+                if verbose > 1:
+                    print(f"RX: {frame.hex}")
+                if is_reply_to(
+                    frame,
+                    sender=receiver,
+                    sender_index=receiver_index,
+                    seq=seq,
+                    cmd_set=CMD_SET_GENERAL,
+                    cmd_id=CMD_ID_GENERAL_GET_CFG_FILE,
+                ):
+                    matched = frame
+                    break
+
+            if matched is None:
+                print(
+                    f"ERROR: no matching 0x00/0x4F response at offset {offset}.",
+                    file=sys.stderr,
+                )
+                return 3
+
+            try:
+                status, remaining, chunk = parse_cfg_manifest_reply(matched.payload)
+            except ValueError as exc:
+                print(f"ERROR: malformed 0x00/0x4F response: {exc}", file=sys.stderr)
+                return 4
+
+            if status != 0:
+                print(
+                    f"ERROR: 0x00/0x4F returned status 0x{status:02x} at offset {offset}.",
+                    file=sys.stderr,
+                )
+                return 5
+            if not chunk and remaining:
+                print("ERROR: manifest read made no forward progress.", file=sys.stderr)
+                return 6
+
+            out.extend(chunk)
+            offset += len(chunk)
+            if verbose:
+                print(
+                    f"RX chunk={len(chunk)} total={len(out)} remaining={remaining}"
+                )
+
+            if remaining == 0:
+                break
+            if b"</dji>" in out:
+                break
+
+    try:
+        info = parse_aircraft_cfg_manifest(bytes(out))
+    except (UnicodeDecodeError, ValueError) as exc:
+        print(f"ERROR: incomplete/unparseable aircraft cfg.sig: {exc}", file=sys.stderr)
+        return 7
+
+    print(f"device={info.device or '(unknown)'}")
+    print(f"formal={info.formal or '(missing)'}")
+    print(f"release={info.release or '(missing)'}")
+    print(
+        "antirollback="
+        f"{info.antirollback or '(missing)'} "
+        f"antirollback_ext={info.antirollback_ext or '(missing)'}"
+    )
+    print(
+        f"enforce={info.enforce or '(missing)'} "
+        f"enforce_time={info.enforce_time or '(missing)'}"
+    )
+    print(f"modules={len(info.modules)}")
+    for mid, version, filename in info.modules:
+        print(f"  {mid or '????'}  {version or '(no version)'}  {filename}")
+    print("NOTE: FORMAL is the aircraft-level version intended for the offline ARB guard.")
+    return 0
 
 
 def describe_general_serial_payload(payload: bytes) -> str:
@@ -727,6 +1026,7 @@ def send_read_query(
     ser_obj,
     *,
     receiver: int,
+    receiver_index: int = 0,
     cmd_set: int,
     cmd_id: int,
     payload: bytes,
@@ -739,6 +1039,7 @@ def send_read_query(
         seq=seq,
         payload=payload,
         receiver=receiver,
+        receiver_index=receiver_index,
         ack_type=ACK_AFTER_EXEC,
         cmd_set=cmd_set,
         cmd_id=cmd_id,
@@ -755,7 +1056,14 @@ def send_read_query(
     deadline = time.monotonic() + timeout_seconds
     skipped = 0
     for frame in read_frames(ser_obj, reader, deadline):
-        if is_reply_to(frame, sender=receiver, seq=seq, cmd_set=cmd_set, cmd_id=cmd_id):
+        if is_reply_to(
+            frame,
+            sender=receiver,
+            sender_index=receiver_index,
+            seq=seq,
+            cmd_set=cmd_set,
+            cmd_id=cmd_id,
+        ):
             if verbose > 1:
                 print(f"{label} RX: {frame.hex}")
             return frame
@@ -765,6 +1073,84 @@ def send_read_query(
     if verbose > 1 and skipped:
         print(f"{label}: ignored {skipped} unrelated DUML frame(s) while waiting for the reply")
     return None
+
+
+def describe_general_version_inquiry_payload(payload: bytes) -> str:
+    """Describe a DJI General/Version Inquiry (0x00/0x01) response."""
+    if len(payload) < 26:
+        return f"raw={payload.hex(' ')} (short payload)"
+    status0 = payload[0]
+    status1 = payload[1]
+    hw = _ascii_until_nul(payload[2:18])
+    ldr = int.from_bytes(payload[18:22], "little")
+    app = int.from_bytes(payload[22:26], "little")
+    extra = payload[26:]
+    parts = [
+        f"status=0x{status0:02x}/0x{status1:02x}",
+        f"hw={hw!r}",
+        f"loader=0x{ldr:08x}",
+        f"app=0x{app:08x}",
+    ]
+    if extra:
+        parts.append(f"extra={extra.hex(' ')}")
+    return ", ".join(parts)
+
+
+def run_service_fw_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
+    """Read-only WM163 service-firmware target/version probe.
+
+    Recovered DrGrey notes identify modules 0100, 0306 and 1100. In DJI module
+    addressing these map to device type/index pairs CAMERA.0, FLYC.6 and
+    BATTERY.0. This command only sends General/Version Inquiry (0x00/0x01).
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    targets = (
+        ("0100 CAMERA.0", COMM_DEV_CAMERA, 0),
+        ("0306 FLYC.6", COMM_DEV_FLYCONTROLLER, 6),
+        ("1100 BATTERY.0", COMM_DEV_BATTERY, 0),
+    )
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: READ-ONLY service-firmware target probe.")
+    print("Query: GENERAL 0x00/0x01 Version Inquiry only.")
+    print("Targets: 0100 CAMERA.0, 0306 FLYC.6, 1100 BATTERY.0.")
+    print("No firmware upload, calibration, factory-state change, serial write, or reboot is sent.")
+
+    responses = 0
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+            for label, device_type, device_index in targets:
+                frame = send_read_query(
+                    ser_obj,
+                    receiver=device_type,
+                    receiver_index=device_index,
+                    cmd_set=CMD_SET_GENERAL,
+                    cmd_id=0x01,
+                    payload=b"",
+                    timeout_seconds=timeout_seconds,
+                    verbose=verbose,
+                    label=label,
+                )
+                if frame is None:
+                    print(f"{label}: no matching response")
+                    continue
+                responses += 1
+                print(
+                    f"{label}: sender={frame.sender}.{frame.sender_index} "
+                    f"payload_len={len(frame.payload)} "
+                    f"{describe_general_version_inquiry_payload(frame.payload)}"
+                )
+    except Exception as exc:
+        if serial is not None and isinstance(exc, serial.SerialException):
+            print(f"ERROR: serial failure on {port}: {exc}", file=sys.stderr)
+            return 5
+        raise
+
+    return 0 if responses else 4
 
 
 def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
@@ -880,6 +1266,135 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
     print("NOTE: WM163 camera/gimbal ActiveStatus semantics are still being capture-validated; preserve raw -vv output.")
     print("FC BoardNum/ChipId/ModuleNum/DeviceNum probes are read-only; do not infer pairing from a value alone.")
     print("Do not post real aircraft or module serial numbers publicly.")
+    return 0 if responses else 4
+
+
+def decode_gimbal_imu_0x51_payload(payload: bytes) -> tuple[list[float], bytes]:
+    """Decode the observed WM163 GIMBAL 0x04/0x51 response layout.
+
+    Target aircraft observation after clearing 40021:
+      99-byte payload = 24 little-endian float32 values (96 bytes)
+                      + 3-byte opaque trailer.
+
+    The trailer's semantics are not claimed yet; preserve it byte-for-byte.
+    """
+    if len(payload) != 99:
+        raise ValueError(f"expected 99-byte WM163 0x04/0x51 payload, got {len(payload)}")
+    values = list(struct.unpack("<24f", payload[:96]))
+    trailer = payload[96:]
+    return values, trailer
+
+
+def run_40011_probe(port: str, baudrate: int, timeout_seconds: float, verbose: int) -> int:
+    """Read-only discovery probe for the remaining WM163 40011 repair path.
+
+    Recovered DrGrey beta flow begins by reading:
+      CAMERA 0x02/0xB5 (camera identity)
+      GIMBAL 0x04/0x51 (live IMU block)
+
+    This command deliberately stops there. It does NOT send 0x00/0x50,
+    0x04/0x36, 0x04/0x68, calibration commands, or reboot requests.
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: READ-ONLY 40011 discovery probe.")
+    print("Queries: CAMERA 0x02/0xB5, GIMBAL 0x00/0x51 identity slots, and GIMBAL 0x04/0x51.")
+    print("No calibration, association, serial-number write, IMU write, save, or reboot command is sent.")
+
+    responses = 0
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+            camera = send_read_query(
+                ser_obj,
+                receiver=COMM_DEV_CAMERA,
+                cmd_set=2,
+                cmd_id=CMD_ID_CAMERA_GET_SENSOR_ID,
+                payload=b"\x00\x00\x00\x00",
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+                label="camera 02/B5",
+            )
+            if camera is None:
+                print("camera 02/B5: no matching response")
+            else:
+                responses += 1
+                print(
+                    f"camera 02/B5: payload_len={len(camera.payload)} "
+                    f"payload={camera.payload.hex(' ')}"
+                )
+                print(f"camera 02/B5 decoded: {describe_camera_sensor_id_payload(camera.payload)}")
+
+            # Read the gimbal's common serial-number slots as a completely
+            # read-only cross-check for the remaining 40011 association error.
+            # General 0x00/0x51 is DJI's Get Serial Number command; selectors
+            # 0x01..0x04 are the same BoardNum/ChipId/ModuleNum/DeviceNum family
+            # already used by the FC identity probe.
+            for selector, source_name in (
+                (0x01, "BoardNum"),
+                (0x02, "ChipId"),
+                (0x03, "ModuleNum"),
+                (0x04, "DeviceNum"),
+            ):
+                frame = send_read_query(
+                    ser_obj,
+                    receiver=COMM_DEV_GIMBAL,
+                    cmd_set=CMD_SET_GENERAL,
+                    cmd_id=CMD_ID_GENERAL_GET_SN,
+                    payload=bytes([selector]),
+                    timeout_seconds=timeout_seconds,
+                    verbose=verbose,
+                    label=f"gimbal 00/51 selector {selector}",
+                )
+                if frame is None:
+                    print(f"gimbal 00/51 selector {selector}: no matching response ({source_name})")
+                else:
+                    responses += 1
+                    print(
+                        f"gimbal 00/51 selector {selector}: "
+                        f"{describe_common_device_id_payload(frame.payload)} [{source_name}]"
+                    )
+
+            imu = send_read_query(
+                ser_obj,
+                receiver=COMM_DEV_GIMBAL,
+                cmd_set=CMD_SET_ZENMUSE,
+                cmd_id=CMD_ID_GIMBAL_READ_IMU,
+                payload=b"",
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+                label="gimbal 04/51",
+            )
+            if imu is None:
+                print("gimbal 04/51: no matching response")
+            else:
+                responses += 1
+                print(
+                    f"gimbal 04/51: payload_len={len(imu.payload)} "
+                    f"payload={imu.payload.hex(' ')}"
+                )
+                if len(imu.payload) == 99:
+                    values, trailer = decode_gimbal_imu_0x51_payload(imu.payload)
+                    print("gimbal 04/51 decoded: 24 float32 values + 3-byte trailer")
+                    for index, value in enumerate(values):
+                        print(f"  f[{index:02d}] = {value:.9g}")
+                    print(f"  trailer = {trailer.hex(' ')}")
+                elif imu.payload:
+                    print("gimbal 04/51: unknown payload layout; raw bytes preserved only")
+                if imu.payload:
+                    print(
+                        "NOTE: preserve this exact 04/51 payload; it is the device-specific "
+                        "input needed to validate the recovered read/push/save contract."
+                    )
+    except Exception as exc:
+        if serial is not None and isinstance(exc, serial.SerialException):
+            print(f"ERROR: serial failure on {port}: {exc}", file=sys.stderr)
+            return 5
+        raise
+
     return 0 if responses else 4
 
 
@@ -1386,6 +1901,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     flightlog.add_argument("path", help="path to DJIFlightRecord_*.txt")
 
+    fw_manifest = sub.add_parser(
+        "probe-fw-manifest",
+        help="read-only installed aircraft cfg.sig manifest over General 0x00/0x4F",
+    )
+    fw_manifest.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    fw_manifest.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    fw_manifest.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=3.0,
+        help="per-page response timeout (default: 3 seconds)",
+    )
+
+    service_probe = sub.add_parser(
+        "probe-service-fw",
+        help="read-only version inquiry for recovered WM163 service modules 0100/0306/1100",
+    )
+    service_probe.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    service_probe.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    service_probe.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=3.0,
+        help="per-module response timeout (default: 3 seconds)",
+    )
+
     identify = sub.add_parser(
         "identify",
         help="read-only WM163 aircraft/camera/gimbal identity probe for post-replacement diagnostics",
@@ -1397,6 +1938,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.5,
         help="per-query response timeout (default: 2.5 seconds)",
+    )
+
+    probe_40011 = sub.add_parser(
+        "probe-40011",
+        help="read-only DrGrey-path discovery: read camera 02/B5 and gimbal IMU 04/51",
+    )
+    probe_40011.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    probe_40011.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    probe_40011.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=3.0,
+        help="per-query response timeout (default: 3 seconds)",
     )
 
     diag = sub.add_parser(
@@ -1519,8 +2073,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.action == "flightlog-info":
         return run_flightlog_info(args.path)
 
+    if args.action == "probe-fw-manifest":
+        return run_fw_manifest_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
+
+    if args.action == "probe-service-fw":
+        return run_service_fw_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
+
     if args.action == "identify":
         return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
+
+    if args.action == "probe-40011":
+        return run_40011_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
 
     if args.action == "diagnose-gimbal":
         return run_gimbal_diagnostics(args.port, args.baudrate, args.seconds, args.verbose)
@@ -1539,18 +2102,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         return run_auto_cal_capture(args.port, args.baudrate, args.seconds, args.verbose)
 
     if args.action == "fix-imu-40021-short":
-        print(
-            "DISABLED in v0.12.1: newer recovery evidence shows DrGrey wraps the short "
-            "40021 operation in factory/service-state handling whose exact wire "
-            "transactions are not yet decoded.",
-            file=sys.stderr,
+        if not args.yes:
+            parser.error(
+                "refusing to run the WM163 40021 repair without --yes; "
+                "verify this aircraft is DJI Mini 3 / WM163 and remove the propellers"
+            )
+        print("WARNING: This performs the bank-confirmed WM163 short 40021 repair.")
+        print("Remove propellers. Use only on DJI Mini 3 / WM163 with active diagnostic 40021.")
+        return run_fix_imu_40021_short(
+            args.port,
+            args.baudrate,
+            args.precheck_seconds,
+            args.reply_timeout_seconds,
+            args.verbose,
         )
-        print(
-            "No write was sent. Use dry-run-40021 only until _read_factory_state / "
-            "_set_factory are capture- or disassembly-verified.",
-            file=sys.stderr,
-        )
-        return 12
 
     if not args.yes:
         parser.error(

@@ -9,6 +9,7 @@ from mini3_gimbal_cal import (
     CALIB_COMMANDS,
     CMD_ID_GENERAL_REBOOT,
     CMD_ID_GIMBAL_WRITE_IMU,
+    CMD_ID_GIMBAL_READ_IMU,
     CMD_SET_GENERAL,
     CMD_SET_ZENMUSE,
     COMM_DEV_BATTERY,
@@ -21,6 +22,7 @@ from mini3_gimbal_cal import (
     crc8_header,
     describe_active_status_payload,
     decode_gimbal_check_status,
+    decode_gimbal_imu_0x51_payload,
     describe_auto_cal_status_payload,
     describe_ccode_payload,
     describe_gimbal_check_status_payload,
@@ -28,6 +30,7 @@ from mini3_gimbal_cal import (
     describe_common_device_id_payload,
     describe_fc_device_info_payload,
     describe_gimbal_serial_payload,
+    describe_general_version_inquiry_payload,
     describe_general_serial_payload,
     describe_payload,
     parse_flightlog_identity,
@@ -286,4 +289,105 @@ def test_builds_recovered_wm163_40021_reboot_packet():
     assert frame.encrypt_type == 0
     assert frame.cmd_set == 0x00
     assert frame.cmd_id == 0x0B
+    assert frame.payload == b""
+
+
+def test_builds_read_only_wm163_gimbal_imu_probe_packet():
+    pkt = build_packet(
+        seq=0x5151,
+        payload=b"",
+        receiver=COMM_DEV_GIMBAL,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_READ_IMU,
+    )
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.receiver == 4
+    assert frame.seq == 0x5151
+    assert frame.packet_type == 0
+    assert frame.ack_type == ACK_AFTER_EXEC
+    assert frame.cmd_set == 0x04
+    assert frame.cmd_id == 0x51
+    assert frame.payload == b""
+
+
+def test_decodes_observed_wm163_0x51_layout():
+    payload = bytes.fromhex(
+        "00 f7 7f 3f 92 d6 da bb b5 79 78 bc "
+        "00 00 00 00 00 00 80 3f 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "f5 25 89 3a 91 31 16 3d ac e5 02 3c "
+        "41 b4 99 3c 7f 36 2e ba 80 99 9c bc "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "00 00 00 00 00 00 00 00 00 00 00 00 "
+        "52 02 3c"
+    )
+    values, trailer = decode_gimbal_imu_0x51_payload(payload)
+    assert len(values) == 24
+    assert abs(values[0] - 0.9998626708984375) < 1e-9
+    assert abs(values[1] - (-0.006678410805761814)) < 1e-12
+    assert values[4] == 1.0
+    assert trailer == bytes.fromhex("52 02 3c")
+
+
+def test_builds_indexed_version_inquiry_for_recovered_0306_target():
+    pkt = build_packet(
+        seq=0x3060,
+        payload=b"",
+        receiver=3,
+        receiver_index=6,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=0x01,
+    )
+    assert pkt[5] == 0xC3
+    frame = parse_frame(pkt)
+    assert frame.receiver == 3
+    assert frame.receiver_index == 6
+    assert frame.cmd_set == 0x00
+    assert frame.cmd_id == 0x01
+    assert frame.payload == b""
+
+
+def test_describes_general_version_inquiry_payload():
+    payload = (
+        bytes.fromhex("00 00")
+        + b"WM163_TEST\x00\x00\x00\x00\x00\x00"
+        + bytes.fromhex("04 03 02 01 08 07 06 05 aa bb")
+    )
+    desc = describe_general_version_inquiry_payload(payload)
+    assert "WM163_TEST" in desc
+    assert "loader=0x01020304" in desc
+    assert "app=0x05060708" in desc
+    assert "extra=aa bb" in desc
+
+
+def test_builds_recovered_wm163_commit_hold_poll_packet():
+    # Recovered directly from DrGrey mini3_service_flash._hold_for_commit:
+    # HOST=0x2A, dst=0x28, seq=0, FLAG_REQ_ACK=0x40,
+    # CMDSET=0, CMDID=1, empty payload.
+    pkt = build_packet(
+        seq=0,
+        payload=b"",
+        sender=10,
+        sender_index=1,
+        receiver=8,
+        receiver_index=1,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=0x01,
+    )
+    assert pkt == bytes.fromhex("55 0d 04 33 2a 28 00 00 40 00 01 f1 fd")
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.sender_index == 1
+    assert frame.receiver == 8
+    assert frame.receiver_index == 1
+    assert frame.seq == 0
+    assert frame.packet_type == 0
+    assert frame.ack_type == ACK_AFTER_EXEC
+    assert frame.cmd_set == 0x00
+    assert frame.cmd_id == 0x01
     assert frame.payload == b""
