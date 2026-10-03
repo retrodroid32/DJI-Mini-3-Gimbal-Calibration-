@@ -106,3 +106,40 @@ def has_service_fw(
     lib = SERVICE_FW_LIBRARY if library is None else library
     model = ("" if model_code is None else str(model_code)).strip().upper()
     return bool(lib.get(model, ()))
+
+
+def select_service_fw_from_aircraft_manifest(
+    model_code: object,
+    aircraft_manifest: Mapping[str, object] | None,
+    library: Mapping[str, Sequence[ServiceFw]] | None = None,
+) -> tuple[ServiceFw | None, str]:
+    """ARB-aware selection using the aircraft's own cfg.sig FORMAL version.
+
+    The recovered DrGrey diagnostics path can read the installed aircraft
+    firmware manifest read-only.  This helper intentionally requires the
+    aircraft-level FORMAL release string from that manifest instead of using
+    per-module loader/app versions.
+
+    It contains no transport code and cannot flash an aircraft.
+    """
+    if not aircraft_manifest:
+        return None, (
+            "ARB guard blocked: no aircraft firmware manifest was supplied. "
+            "A read-only cfg.sig FORMAL version is required."
+        )
+
+    formal = aircraft_manifest.get("formal")
+    if formal is None:
+        # Permit a nested shape matching common parsed-manifest structures
+        # without guessing a version from module entries.
+        firmware = aircraft_manifest.get("firmware")
+        if isinstance(firmware, Mapping):
+            formal = firmware.get("formal")
+
+    if not formal:
+        return None, (
+            "ARB guard blocked: aircraft cfg.sig has no FORMAL firmware "
+            "version. Module app/loader versions are not valid substitutes."
+        )
+
+    return select_service_fw(model_code, formal, library)
