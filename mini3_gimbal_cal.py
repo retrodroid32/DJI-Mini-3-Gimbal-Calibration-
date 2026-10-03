@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.11.0"
+VERSION = "0.11.1"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -889,20 +889,28 @@ def run_gimbal_diagnostics(port: str, baudrate: int, seconds: float, verbose: in
     deadline = time.monotonic() + seconds
     seen: dict[bytes, int] = {}
 
-    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
-        ser_obj.reset_input_buffer()
-        for frame in read_frames(ser_obj, reader, deadline):
-            if (
-                frame.sender == COMM_DEV_GIMBAL
-                and frame.cmd_set == CMD_SET_GENERAL
-                and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
-            ):
-                seen[frame.payload] = seen.get(frame.payload, 0) + 1
-                if verbose:
-                    print(
-                        f"gimbal check-status: payload={frame.payload.hex(' ')}  "
-                        f"{describe_gimbal_check_status_payload(frame.payload)}"
-                    )
+    try:
+        with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+            ser_obj.reset_input_buffer()
+            for frame in read_frames(ser_obj, reader, deadline):
+                if (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_GENERAL
+                    and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
+                ):
+                    seen[frame.payload] = seen.get(frame.payload, 0) + 1
+                    if verbose:
+                        print(
+                            f"gimbal check-status: payload={frame.payload.hex(' ')}  "
+                            f"{describe_gimbal_check_status_payload(frame.payload)}"
+                        )
+    except Exception as exc:
+        if serial is not None and isinstance(exc, serial.SerialException):
+            print(f"ERROR: could not open {port}: {exc}", file=sys.stderr)
+            print("Another Windows process probably has the COM port open.", file=sys.stderr)
+            print("Close DJI Assistant 2, serial terminals, and any other Python instance using the port, then retry.", file=sys.stderr)
+            return 5
+        raise
 
     if not seen:
         print("No gimbal General/0xF1 check-status push was observed.")
