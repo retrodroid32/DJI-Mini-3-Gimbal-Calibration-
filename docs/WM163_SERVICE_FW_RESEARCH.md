@@ -3080,3 +3080,69 @@ The helper:
 5. fails closed if FORMAL is absent.
 
 This is transport-agnostic and does not enable live flashing.
+
+
+## Read-only installed cfg.sig preflight implemented — 2026-10-03
+
+The branch now contains a standalone read-only aircraft-manifest probe:
+
+```powershell
+python mini3_gimbal_cal.py -v probe-fw-manifest --port COM23
+```
+
+It does not enter factory mode, send calibration writes, or invoke either
+service-flash session.
+
+Recovered/independently corroborated General Get-Cfg-File protocol:
+
+```text
+CmdSet: 0x00
+CmdId:  0x4F
+
+WM163 responder:
+  target device = 1
+  target index  = 0
+
+request payload:
+  u8      op = 1
+  uint32  offset, little-endian
+  uint32  maximum requested bytes, little-endian
+
+response payload:
+  u8      status
+  uint32  chunk_len, little-endian
+  uint32  remaining_after_chunk, little-endian
+  bytes   data[chunk_len]
+```
+
+The implementation requests up to 1000 bytes per page and advances strictly by
+the returned `chunk_len`. It requires a sequence-matched response from the
+same WM163 target and fails closed on:
+
+- missing response;
+- response shorter than the 9-byte header;
+- declared chunk larger than received data;
+- non-zero status;
+- no forward progress while bytes remain;
+- incomplete/unparseable DJI XML;
+- maximum-read bound exhaustion.
+
+The accumulated signed cfg container is searched only for its clear
+`<?xml ... </dji>` region. The parser reports:
+
+```text
+device
+firmware formal
+release version
+antirollback
+antirollback_ext
+enforce
+enforce_time
+module id/version/filename inventory
+```
+
+The reported aircraft-level `formal` value is the value intended for
+`select_service_fw_from_aircraft_manifest(...)`.
+
+This closes the previous need to guess the public version from module
+Version-Inquiry values. Live service flashing remains disabled.
