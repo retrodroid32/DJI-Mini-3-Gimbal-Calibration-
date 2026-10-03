@@ -134,3 +134,30 @@ def test_known_v30_session_b_total_size():
         ("1200", b"x" * 56352),
     ]
     assert session_b_total_size(files) == 52009440
+
+
+def test_known_loader_record_and_sequence_invariants():
+    from wm163_service_flash_protocol import chunk_count, seq_after
+
+    loader_size = 743120
+    assert chunk_count(loader_size) == 759
+    assert loader_size - (758 * CHUNK) == 280
+    # ENTER + PREPARE + REPORT_SIZE + 759 DATA + VERIFY + CMD_0B
+    assert seq_after(0x4900, 764) == 0x4BFC
+
+
+def test_known_v30_session_b_record_and_finalize_sequence_invariants():
+    from wm163_service_flash_protocol import session_b_record_count, seq_after
+
+    files = [
+        ("wm163.cfg.sig", b"x" * 2336),
+        ("0100", b"x" * 39459264),
+        ("0105", b"x" * 245824),
+        ("0306", b"x" * 1760032),
+        ("0905", b"x" * 10390912),
+        ("1100", b"x" * 94720),
+        ("1200", b"x" * 56352),
+    ]
+    assert session_b_record_count(files) == 53087
+    # ENTER and REPORT_SIZE consume 0x3022 and 0x3023; first 0x2A record is 0x3024.
+    assert seq_after(0x3024, 53087) == 0xFF83
