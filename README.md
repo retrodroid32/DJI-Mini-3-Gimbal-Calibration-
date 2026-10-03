@@ -235,3 +235,24 @@ DJI's decompiled `Ccode` enum maps `0xFD` to `FLASH_FLUSHING`
 and `ModuleNum` selector probes returned `0xFD` with zero-filled data, so the
 tool now labels that code correctly instead of `UNKNOWN`. Those selector
 responses are still not treated as useful camera/gimbal pairing evidence.
+
+
+### v0.9.0 PC-only normal auto-calibration capture
+
+On some Mini 3 units, the USB virtual-COM/service presentation is selected during
+startup and the normal RC/DJI Fly link does not remain available at the same time.
+For those units, starting calibration in DJI Fly and then attaching the PC is not
+a practical capture path.
+
+`auto-cal-capture` sends the builder-verified normal DJI Fly gimbal auto
+calibration request directly over the COM service link and records the resulting
+gimbal DUML traffic:
+
+```text
+python mini3_gimbal_cal.py -v auto-cal-capture --port COM23 --seconds 60 --yes
+```
+
+The request is GIMBAL `0x04/0x08` with an **empty payload**. It is intentionally
+different from the older service-tool variants that reuse `0x04/0x08` with
+payload `01` (JointCoarse) or `02` (LinearHall). This command does not send
+`0x04/0x68` and does not write serial/pairing data.
