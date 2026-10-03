@@ -69,7 +69,12 @@ def test_selects_newest_eligible_candidate():
     assert fw.filename == "future.bin"
 
 
-def test_has_service_fw():
-    assert has_service_fw("WM163", "01.00.0500")
-    assert not has_service_fw("WM163", "31.00.0000")
-    assert not has_service_fw("UNKNOWN", "01.00.0000")
+def test_has_service_fw_is_catalog_only_not_arb_gate():
+    assert has_service_fw("WM163")
+    assert has_service_fw(" wm163 ")
+    assert not has_service_fw("UNKNOWN")
+
+    # Recovered DrGrey behavior: availability is independent of public FW.
+    # ARB enforcement belongs to select_service_fw(), not has_service_fw().
+    fw, _ = select_service_fw("WM163", "31.00.0000")
+    assert fw is None
