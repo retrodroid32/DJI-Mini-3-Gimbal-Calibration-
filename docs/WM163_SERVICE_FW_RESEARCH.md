@@ -1638,3 +1638,56 @@ flasher.session_b(ordered_files, total_size)
 without an explicit sequence argument, so the remaining exact question is now reduced to one item: recover the Cython wrapper's default value for `seq0` (or the equivalent default object installed by the wrapper). Do not assume that default is zero until the wrapper/default-object mapping is proven.
 
 This also confirms that the same saved sequence state seen in the 0x2A transfer body is the state advanced modulo 16 bits; the next trace target is the wrapper default plus the phase edges around START/DATA/END and finalization.
+
+
+## Session-B seq0 default proven: zero — 2026-10-03
+
+The remaining Session-B initial sequence seed is now resolved from the Cython wrapper and module constant initialization.
+
+The Python-callable `Flasher.session_b` wrapper at `0x18000DCD0` accepts five argument slots total:
+
+```text
+self
+required arg 1
+required arg 2
+optional arg 3
+optional arg 4
+```
+
+Only the first three slots (including `self`) are required. The first optional slot is the integer-like path passed as the native function's fourth register argument and is the previously identified `seq0` value.
+
+When that slot is omitted, the wrapper loads its default from module-state pointer `0x180026880`.
+
+Cython's module initialization creates the cached integer objects in a 37-entry table. The integer table begins:
+
+```text
+index 0 = 0
+index 1 = 1
+index 2 = 2
+index 3 = 3
+...
+```
+
+The module-state layout places the first cached integer entry at exactly `0x180026880`. Therefore the wrapper's omitted `seq0` argument resolves to:
+
+```python
+seq0 = 0
+```
+
+This matches the higher-level worker call already recovered:
+
+```python
+flasher.session_b(ordered_files, total_size)
+```
+
+because no explicit sequence value is passed and the Cython wrapper supplies zero.
+
+Combined with the already recovered send block, the Session-B 0x2A stream sequence is now:
+
+```python
+seq = 0
+# for each successfully written 0x2A record:
+seq = (seq + 1) & 0xFFFF
+```
+
+This removes the Session-B initial-sequence seed from the blocker list. Remaining phase-edge work is to pin down exactly which control records consume separate sequence values (if any) around ENTER, REPORT_SIZE, START/DATA/END, and FINALIZE, plus the Session-A-to-loader-to-Session-B handoff/error paths.
