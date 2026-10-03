@@ -1912,3 +1912,63 @@ post-finalize _hold_for_commit()
 ```
 
 This also supersedes the older note suggesting START/END might follow a materially different sequence-control path from DATA. Their payload construction paths differ, but all three consume the same Session-B sequence state.
+
+
+## Session-A default sequence and A→B sequence reset proven — 2026-10-03
+
+Static reconstruction of the Python-callable `Flasher.session_a` wrapper resolves the Session-A initial sequence seed.
+
+The wrapper accepts:
+
+```python
+session_a(self, loader, seq0=0x4900)
+```
+
+When the optional `seq0` argument is omitted, the wrapper loads module-state pointer `0x180026890`. Using the already reconstructed cached-PyLong table base `0x180026780`, this is integer-cache index 34:
+
+```text
+index 34 = 0x4900 = 18688
+```
+
+The native Session-A body receives that Python integer in its sequence argument and carries it forward through the Session-A control/stream operations. After successful operations it applies the same recovered modulo-16-bit advancement primitive used elsewhere:
+
+```python
+seq = (seq + 1) & 0xFFFF
+```
+
+Therefore Session A begins with:
+
+```text
+A initial seq = 0x4900
+```
+
+and advances that shared Session-A counter through A/ENTER, A/PREPARE, A/REPORT_SIZE, A/DATA records, A/CMD_0A and A/CMD_0B as those operations succeed.
+
+### The A→B transition resets sequence space
+
+The higher-level worker invokes both session methods without explicit sequence overrides. Their independently recovered wrapper defaults are:
+
+```text
+Session A seq0 = 0x4900
+Session B seq0 = 0x3022
+```
+
+Thus Session B does **not** inherit the final Session-A sequence value after the temporary loader comes up. The two service-flash stages deliberately start from separate fixed sequence seeds.
+
+Conceptually:
+
+```text
+SESSION A
+  seq = 0x4900
+  ... upload temporary loader ...
+  ... wait for WM163 UAV identity ...
+
+SESSION B
+  seq = 0x3022      # fresh fixed seed
+  B/ENTER
+  B/REPORT_SIZE
+  START/DATA/END ...
+  B/FINALIZE
+```
+
+This removes sequence carry-over from the handoff/reconnect blocker. What remains to prove at the higher-level worker is transport-object lifetime/reuse and exact failure/reconnect behavior around the moment Session A observes the `WM163 UAV` loader and returns to the worker.
