@@ -161,3 +161,41 @@ def test_known_v30_session_b_record_and_finalize_sequence_invariants():
     assert session_b_record_count(files) == 53087
     # ENTER and REPORT_SIZE consume 0x3022 and 0x3023; first 0x2A record is 0x3024.
     assert seq_after(0x3024, 53087) == 0xFF83
+
+
+def test_recovered_sequence_defaults_and_drain_cadence():
+    from wm163_service_flash_protocol import (
+        SESSION_A_SEQ0,
+        SESSION_B_SEQ0,
+        SESSION_B_TIMEOUT_SECONDS,
+        SESSION_B_DRAIN_EVERY_RECORDS,
+        SESSION_B_PERIODIC_DRAIN_MS,
+        SESSION_B_FINAL_DRAIN_MS,
+    )
+
+    assert SESSION_A_SEQ0 == 0x4900
+    assert SESSION_B_SEQ0 == 0x3022
+    assert SESSION_B_TIMEOUT_SECONDS == 180
+    assert SESSION_B_DRAIN_EVERY_RECORDS == 64
+    assert SESSION_B_PERIODIC_DRAIN_MS == 15
+    assert SESSION_B_FINAL_DRAIN_MS == 300
+
+
+def test_recovered_sequence_helpers_match_known_transfers():
+    from wm163_service_flash_protocol import (
+        session_a_next_seq_after_loader,
+        session_b_finalize_seq,
+    )
+
+    assert session_a_next_seq_after_loader(743120) == 0x4BFC
+
+    files = [
+        ("wm163.cfg.sig", b"x" * 2336),
+        ("0100", b"x" * 39459264),
+        ("0105", b"x" * 245824),
+        ("0306", b"x" * 1760032),
+        ("0905", b"x" * 10390912),
+        ("1100", b"x" * 94720),
+        ("1200", b"x" * 56352),
+    ]
+    assert session_b_finalize_seq(files) == 0xFF83
