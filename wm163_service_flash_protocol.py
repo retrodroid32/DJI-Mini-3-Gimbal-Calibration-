@@ -28,6 +28,13 @@ CMD_PREPARE_A = 0x0C
 CMD_STREAM_B = 0x2A
 CMD_COMMIT_PROBE = 0x01
 
+SESSION_A_SEQ0 = 0x4900
+SESSION_B_SEQ0 = 0x3022
+SESSION_B_TIMEOUT_SECONDS = 180
+SESSION_B_DRAIN_EVERY_RECORDS = 64
+SESSION_B_PERIODIC_DRAIN_MS = 15
+SESSION_B_FINAL_DRAIN_MS = 300
+
 COMMIT_PROBE_SEQ = 0
 COMMIT_PROBE_TIMEOUT_MS = 500
 COMMIT_HOLD_SLEEP_SECONDS = 0.5
@@ -169,3 +176,17 @@ def seq_after(start_seq: int, operations: int) -> int:
     if operations < 0:
         raise ValueError("operations must be non-negative")
     return (start_seq + operations) & 0xFFFF
+
+
+def session_a_next_seq_after_loader(loader_size: int) -> int:
+    """Expected next-unused Session-A sequence after a complete loader transfer."""
+    # ENTER + PREPARE + REPORT_SIZE + DATA records + CMD_0A + CMD_0B.
+    operations = 5 + chunk_count(loader_size)
+    return seq_after(SESSION_A_SEQ0, operations)
+
+
+def session_b_finalize_seq(files) -> int:
+    """Expected B/FINALIZE sequence for an already-selected Session-B file set."""
+    # ENTER and REPORT_SIZE consume the first two sequence values.
+    first_record_seq = seq_after(SESSION_B_SEQ0, 2)
+    return seq_after(first_record_seq, session_b_record_count(files))
