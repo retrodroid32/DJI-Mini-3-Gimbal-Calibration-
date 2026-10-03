@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -47,6 +47,7 @@ CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
+CMD_ID_GIMBAL_AUTO_CAL_STATUS = 0x30
 CMD_ID_CAMERA_GET_SENSOR_ID = 0xB5
 
 PACKET_TYPE_REQUEST = 0
@@ -467,6 +468,27 @@ def describe_general_serial_payload(payload: bytes) -> str:
     return f"raw={payload.hex(' ')}"
 
 
+def describe_auto_cal_status_payload(payload: bytes) -> str:
+    """Decode DataGimbalGetPushAutoCalibrationStatus.
+
+    DJI's parser maps byte 0 to progress and byte 1 to status:
+      1 = calibrating
+      0 = successful
+      any other value = failed/other
+    """
+    if len(payload) < 2:
+        return f"raw={payload.hex(' ')}"
+    progress = payload[0]
+    status = payload[1]
+    if status == 0:
+        state = "SUCCESS"
+    elif status == 1:
+        state = "CALIBRATING"
+    else:
+        state = f"FAILED_OR_OTHER_{status}"
+    return f"progress={progress}% status={status} ({state})"
+
+
 def describe_common_device_id_payload(payload: bytes) -> str:
     """Decode raw General/GetSerialNum response for a selected FC identifier.
 
@@ -841,6 +863,7 @@ def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int)
     counts: dict[tuple[int, int, int, int, bytes], int] = {}
     total = 0
     matched_reply = False
+    final_auto_status: Optional[tuple[int, int]] = None
 
     with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
         ser_obj.reset_input_buffer()
@@ -870,12 +893,27 @@ def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int)
                     + (describe_ccode_payload(frame.payload) if frame.payload else "empty payload")
                 )
 
+            if (
+                frame.sender == COMM_DEV_GIMBAL
+                and frame.cmd_set == CMD_SET_ZENMUSE
+                and frame.cmd_id == CMD_ID_GIMBAL_AUTO_CAL_STATUS
+                and len(frame.payload) >= 2
+            ):
+                final_auto_status = (frame.payload[0], frame.payload[1])
+
             if verbose:
                 elapsed = time.monotonic() - started
+                decoded = ""
+                if (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_ZENMUSE
+                    and frame.cmd_id == CMD_ID_GIMBAL_AUTO_CAL_STATUS
+                ):
+                    decoded = "  " + describe_auto_cal_status_payload(frame.payload)
                 print(
                     f"[{elapsed:6.2f}s] sender={frame.sender} receiver={frame.receiver} "
                     f"set=0x{frame.cmd_set:02x} id=0x{frame.cmd_id:02x} "
-                    f"payload={frame.payload.hex(' ')}"
+                    f"payload={frame.payload.hex(' ')}{decoded}"
                 )
             if verbose > 1:
                 print(f"  RAW: {frame.hex}")
@@ -883,6 +921,16 @@ def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int)
     print(f"Captured {total} gimbal-related DUML frame(s).")
     if not matched_reply:
         print("No sequence-matched 0x04/0x08 reply was observed.")
+    if final_auto_status is not None:
+        progress, status = final_auto_status
+        print(f"Auto-calibration final status: {describe_auto_cal_status_payload(bytes([progress, status]))}")
+        if status == 0 and progress == 100:
+            print("Result: DJI protocol reports gimbal Auto Calibration SUCCESS.")
+        elif status == 1:
+            print("Result: calibration was still reporting CALIBRATING when capture ended.")
+        else:
+            print("Result: DJI protocol did not report a successful final calibration state.")
+
     if counts:
         print("Summary (count sender->receiver set/id payload):")
         for (sender, receiver, cmd_set, cmd_id, payload), count in sorted(
