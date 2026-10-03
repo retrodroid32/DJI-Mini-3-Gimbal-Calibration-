@@ -699,3 +699,71 @@ SHA256 c6c88d49c6da0026a9498d07f04a3db41ef8a8d650a5bbaf22de574dc8e60b26
 This file is now the strongest candidate seen for the previously missing WM163 `mini3_service.bin`, but **it is not yet approved for live flashing**. Before any write path is enabled, DrGrey's exact `service_fw` parser/selection logic still needs to confirm that formal version `30.00.0100`, ARB `0`, this module set, and this container layout are accepted for the target aircraft state.
 
 A separately supplied archive named `V20.00.0800_wm162_dji_system(1).bin` identifies itself as `wm162` and must not be used on the WM163 Mini 3.
+
+
+## External corroboration and V20 WM163 search — 2026-10-03
+
+Public sources now provide useful corroboration for the role of the supplied V30 package, but they do **not** yet establish that V30 is the service image used for 40021.
+
+### Legacy DJI module-role references
+
+The public `o-gs/dji-firmware-tools` wiki documents the older DJI module families as:
+
+- `m0306` — flight-controller application
+- `m1100` — battery firmware
+- `m1200` — ESC firmware
+- `m0100` — video-processing application
+- `m0105` — historically named `CAMLCPUFw.bin`
+- `m0400` — gimbal master control on older architectures
+
+The supplied WM163 V30 package contains `0905, 0306, 1200, 1100, 0105, 0100` and no standalone `0400`. Those legacy roles are useful architectural clues, but they are **not proof that every identifier retained exactly the same hardware ownership on WM163**.
+
+### AW-TOOL evidence
+
+AW-TOOL's current public download page advertises a Mini 3 calibration firmware with:
+
+```text
+version: V30.00.0100
+purpose: gimbal tilt / 4011 calibration
+size: 50800 KB
+```
+
+This aligns closely with the inspected WM163 package:
+
+```text
+device = wm163
+formal = 30.00.0100
+archive size = 52,019,200 bytes
+```
+
+This is strong external corroboration that the supplied V30 package is a Mini 3 gimbal-calibration/service image for 40011-class repair.
+
+### 40011 versus 40021
+
+Do not extend the AW-TOOL claim beyond what the page says. Its public description names Mini 3 `V30.00.0100` for `4011` calibration; it does not explicitly identify that image as the 40021 pairing/IMU-repair image.
+
+Separate repair-community sources do explicitly advertise or discuss Mini 3 workflows for both `40011` and `40021`:
+
+- gzksoft forum thread title: `大疆mini3标定消错40011、40021固件软件` (Mini 3 calibration/error-clearing 40011/40021 firmware/software)
+- another indexed Chinese repair archive groups Mini 3 material under `新版本-40011 40021消错`
+- 4PDA Mini 3 discussions independently describe using service/calibration firmware for persistent gimbal-calibration errors, while users discuss 40021 as a separate repair condition
+
+These sources support the existence of a Mini 3 service workflow covering both errors, but none of the public pages inspected exposes the exact WM163 V20 manifest or proves that V30 and the 40021 workflow use the same service image.
+
+### Narrowed missing artifact
+
+The high-value search target remains:
+
+```text
+V20.00.0100_wm163_dji_system.bin
+```
+
+or, preferably, only its signed manifest:
+
+```text
+wm163.cfg.sig
+```
+
+A manifest alone is sufficient to compare formal version, ARB fields, module order, module versions, sizes and MD5 entries against the validated V30.00.0100 package.
+
+As of this search, no public GitHub code result or indexed web result exposed that exact V20 WM163 file or `wm163.cfg.sig`. Do not invent a V20 module table from nearby Mini 3 Pro / WM162 packages.
