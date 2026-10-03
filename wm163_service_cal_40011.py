@@ -15,6 +15,13 @@ from typing import Optional
 import mini3_gimbal_cal as m
 
 
+# Safety interlock: DrGrey's bench-confirmed WM163 40011 sequence requires
+# service-session keepalives during Joint Coarse -> Linear Hall -> validation.
+# Keep live execution blocked until both exact keepalive packet builders are
+# recovered and covered by offline tests.
+KEEPALIVE_IMPLEMENTATION_READY = False
+
+
 def send_stage(ser_obj, reader: m.FrameReader, name: str, payload: bytes,
                timeout: float, verbose: int) -> bool:
     seq = m.next_sequence()
@@ -71,6 +78,14 @@ def send_stage(ser_obj, reader: m.FrameReader, name: str, payload: bytes,
 
 def run(port: str, baudrate: int, precheck: float, stage_timeout: float,
         verify: float, verbose: int) -> int:
+    if not KEEPALIVE_IMPLEMENTATION_READY:
+        print(
+            "REFUSED: exact WM163 service keepalives are not implemented yet; "
+            "the recovered 40011 sequence must not run without them.",
+            file=sys.stderr,
+        )
+        return 12
+
     if m.serial is None:
         print("ERROR: pyserial is required: python -m pip install pyserial", file=sys.stderr)
         return 2
