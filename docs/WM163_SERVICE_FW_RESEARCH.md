@@ -454,3 +454,80 @@ self._ctrl(
 ```
 
 This is stronger than the earlier generic assumption that Session B merely uses a standard empty Update-Finish packet: DrGrey sends an explicit 17-byte all-zero payload.
+
+
+## Session-A stream and reboot payload — fully recovered
+
+### A/DATA stream
+
+Session A slices the loader into chunks of at most the recovered exported `CHUNK = 980` bytes.
+
+For each chunk, DrGrey constructs:
+
+```python
+payload = (
+    b"\x00"
+    + struct.pack("<I", offset)
+    + struct.pack("<H", len(chunk))
+    + chunk
+)
+
+self._stream(
+    cmd_id=0x09,
+    payload=payload,
+    dst=0xA9,
+    seq=<runtime sequence>,
+    what=f"A idx={...}",
+)
+```
+
+Therefore the Session-A `0x09` data payload has a 7-byte header:
+
+```text
+offset  size  meaning
+0       1     0x00
+1       4     uint32_le image offset
+5       2     uint16_le chunk length
+7       N     chunk bytes (N <= 980)
+```
+
+The `<H` field is proven to be `len(chunk)`: the native code calls `len()` on the sliced chunk object immediately before `struct.pack("<H", ...)`.
+
+### A/CMD_0B — exact payload
+
+The previously unresolved packed numeric field is constructed from Cython integer-table index 30, value `0x03E8 = 1000`.
+
+DrGrey therefore sends:
+
+```python
+payload = (
+    b"\x00\x01"
+    + struct.pack("<I", 1000)
+    + b"DEADBEEF"
+)
+
+self._ctrl(
+    cmd_id=0x0B,
+    payload=payload,
+    dst=0xA9,
+    seq=<runtime sequence>,
+    what="A/CMD_0B",
+)
+```
+
+Exact 14-byte payload:
+
+```text
+00 01 E8 03 00 00 44 45 41 44 42 45 45 46
+```
+
+This completes the known Session-A wire payload sequence:
+
+```text
+0x07 A/ENTER       9 zero bytes
+0x0C A/PREPARE     00
+0x08 A/REPORT_SIZE 00 + <I loader_size> + 6*00 + 01 00
+0x09 A/DATA        00 + <I offset> + <H length> + chunk (<=980 B)
+0x0A A/CMD_0A      00 + MD5(loader).digest()
+0x0B A/CMD_0B      00 01 + <I 1000> + "DEADBEEF"
+```
