@@ -979,3 +979,151 @@ Mini 3 Pro implementation != proof of WM163 packet semantics
 The Mini 3 Pro `finalize()` and `monitor_install()` wrappers provide additional anchors immediately before its hold routine, but their dynamically-resolved Python constants/arguments still need reconstruction before they can be compared meaningfully with the WM163 argument vector.
 
 No WM162/WM163 cross-use should be implemented from structural similarity alone.
+
+
+## Exact WM163 post-finalize poll recovered — 2026-10-03
+
+Direct Cython call-frame reconstruction has now resolved the core packet sent by `Flasher._hold_for_commit()`.
+
+### Constant table recovery
+
+The module initializer creates a fixed PyLong constant table. Relevant recovered entries are:
+
+```text
+0      -> 0x180026780
+15     -> 0x1800267E0
+40     -> 0x1800267F0   # 0x28
+64     -> 0x180026808   # 0x40
+150    -> 0x180026830
+500    -> 0x180026860
+980    -> 0x180026868
+1000   -> 0x180026870
+4000   -> 0x180026878
+```
+
+The `_hold_for_commit` wrapper uses the `150` object as its default duration. The native loop references `15` for its periodic status cadence and `500` for the transport call timeout.
+
+### encode() parameter mapping
+
+The `encode` wrapper has six parameter-name objects in this order:
+
+```text
+0x180026238
+0x1800264A0
+0x1800262B8
+0x180026550
+0x180026310
+0x180026598
+```
+
+The first four are shared, in the same order, with `Flasher._ctrl(self, cmd_id, payload, dst, seq, what, timeout_ms)`. This proves the corresponding `encode` names are:
+
+```text
+cmd_id
+payload
+dst
+seq
+flags
+cmd_set
+```
+
+The final two `encode` parameters have defaults. The recovered callers explicitly set `flags` and omit `cmd_set`; the module-global initialization assigns `CMDSET = 0`.
+
+### Empty payload proof
+
+Global `0x180026648`, used as the second positional argument in the hold-loop encode call, is also passed as the separator to CPython `PyBytes_Join` and returned as the empty result in the transport receive path. It is therefore the module's cached:
+
+```python
+b""
+```
+
+### ACK flag proof
+
+The module initializer assigns integer `64 / 0x40` to the same module-global name object (`0x180026120`) that `_ctrl()` and `_hold_for_commit()` resolve and pass as `encode(..., flags=...)`.
+
+This is the recovered:
+
+```text
+FLAG_REQ_ACK = 0x40
+```
+
+The neighboring initializer assignments independently match the previously recovered constants:
+
+```text
+CMDSET        = 0x00
+FLAG_REQ_ACK  = 0x40
+FLAG_RESP     = 0x80
+HOST          = 0x2A
+```
+
+### Exact encode call
+
+The post-finalize hold therefore constructs:
+
+```python
+encode(
+    0x01,
+    b"",
+    dst=0x28,
+    seq=0,
+    flags=0x40,
+    cmd_set=0x00,
+)
+```
+
+Semantically:
+
+```text
+HOST raw address: 0x2A
+DST raw address:  0x28
+SEQ:              0
+FLAGS:            0x40 (request ACK)
+CMDSET:           0x00 GENERAL
+CMDID:            0x01
+PAYLOAD:          empty
+```
+
+Using the recovered DJI DUML CRC algorithms, the corresponding 13-byte request is:
+
+```text
+55 0D 04 33 2A 28 00 00 40 00 01 F1 FD
+```
+
+This frame is **not inferred from WM162**; it is reconstructed from the WM163 `mini3_service_flash` binary itself.
+
+### Exact transport call
+
+The `EngineTransport.xfer` wrapper parameter names are:
+
+```text
+self
+<frame/data>
+timeout_ms
+```
+
+and its default timeout object is `4000`.
+
+Inside `_hold_for_commit()`, Cython constructs a keyword tuple using that same `timeout_ms` name and the recovered integer `500`, then invokes the same transport-method name used by `_ctrl()`.
+
+Therefore the hold operation is:
+
+```python
+transport.xfer(
+    encoded_commit_poll,
+    timeout_ms=500,
+)
+```
+
+where `encoded_commit_poll` is the exact frame above.
+
+### Remaining work
+
+The packet itself is no longer the blocker. What remains to recover before enabling a live service flasher is the **loop/exit policy** around this transaction:
+
+- how xfer timeout/no-response is treated while commit is in progress;
+- which decoded reply/state is considered terminal success;
+- whether any non-ACK/status frames alter the hold duration;
+- exact logging/poll cadence behavior around the recovered 15-second interval;
+- the final return/reboot behavior after the 150-second hold.
+
+Do not yet reduce the routine to blindly transmitting the poll for 150 seconds. Preserve the distinction between the now-proven packet and the still-being-decoded commit-state/exit semantics.
