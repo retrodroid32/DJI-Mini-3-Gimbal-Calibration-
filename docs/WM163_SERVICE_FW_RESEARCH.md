@@ -2474,3 +2474,18 @@ repeat:
 ```
 
 This supersedes all earlier notes describing a 60-second Session-A loader wait.
+
+
+## Session-B transport return handling recovered — 2026-10-03
+
+Static tracing of `EngineTransport.write`, `EngineTransport.drain`, and their Session-B call sites resolves the remaining return-value handling question.
+
+`EngineTransport.write(self, pkt)` delegates to the underlying transport's `send_and_collect` method with recovered timing values `window_ms=0` and `read_timeout_ms=1`. The wrapper does not compare a returned numeric count with the packet length. At this layer, a normal Python return is accepted; an exception/NULL return propagates as failure.
+
+`EngineTransport.drain(self, budget_ms=300)` uses the underlying `read_burst` operation with a recovered `read_timeout_ms=40`, accumulates received byte chunks during the requested budget, and returns their byte concatenation. An empty receive result is representable as `b""`.
+
+At the Session-B periodic `drain(15)` and iterator-end `drain(300)` call sites, the returned bytes are not parsed or matched against sequence/command fields. The native code only requires the call to complete normally, then discards the returned object. A raised exception aborts Session B; a normal return, including an empty bytes result, is accepted.
+
+Likewise, after a normal custom-0x2A `write()` return, Session B discards that return object and advances the shared 16-bit sequence. There is no additional per-record ACK-content predicate at this call site.
+
+This confirms the custom Session-B stream is exception-gated at the `write`/`drain` wrapper layer rather than lockstep ACK-content-gated. The lower-level contract of the transport object's `send_and_collect` implementation remains a separate layer if exact transport internals are needed later.
