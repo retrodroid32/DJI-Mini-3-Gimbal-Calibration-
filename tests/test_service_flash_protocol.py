@@ -276,3 +276,12 @@ def test_recovered_ctrl_ack_payload_status_rule():
     assert not ctrl_ack_payload_accepted(b"\x01")
     assert not ctrl_ack_payload_accepted(b"\x02details")
     assert not ctrl_ack_payload_accepted(b"\xff")
+
+
+def test_recovered_session_b_finalize_gate():
+    from wm163_service_flash_protocol import session_b_finalize_gate
+
+    assert session_b_finalize_gate(stream_exhausted=True, final_drain_completed=True)
+    assert not session_b_finalize_gate(stream_exhausted=False, final_drain_completed=True)
+    assert not session_b_finalize_gate(stream_exhausted=True, final_drain_completed=False)
+    assert not session_b_finalize_gate(stream_exhausted=False, final_drain_completed=False)
