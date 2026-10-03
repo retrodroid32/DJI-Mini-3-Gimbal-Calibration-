@@ -1127,3 +1127,51 @@ The packet itself is no longer the blocker. What remains to recover before enabl
 - the final return/reboot behavior after the 150-second hold.
 
 Do not yet reduce the routine to blindly transmitting the poll for 150 seconds. Preserve the distinction between the now-proven packet and the still-being-decoded commit-state/exit semantics.
+
+
+### Hold-loop exit and reply handling recovered
+
+The surrounding native control flow is now sufficiently resolved to remove another earlier uncertainty.
+
+After each:
+
+```python
+transport.xfer(commit_poll, timeout_ms=500)
+```
+
+the returned Python object is immediately decreferenced/discarded. The hold routine does **not** inspect a returned ACK payload, decoded frame, status code, or response field to decide whether commit is complete.
+
+The loop obtains the current monotonic/time value, subtracts the saved start value, and performs a Python `<` comparison against the requested hold-duration argument. In conceptual form:
+
+```python
+while (now() - started) < hold_seconds:
+    transport.xfer(commit_poll, timeout_ms=500)
+    ...
+```
+
+The wrapper supplies:
+
+```text
+hold_seconds = 150
+```
+
+unless overridden.
+
+Therefore the normal end condition is **time-based**, not a special terminal firmware ACK.
+
+The transport receive implementation also joins accumulated receive chunks with the cached `b""`; when no chunks were accumulated, it returns that same empty-bytes object. This confirms that a normal no-data receive result is representable without fabricating a terminal commit response.
+
+The loop separately compares elapsed time against the recovered `15` constant for periodic progress/status output. That cadence is logging/progress behavior, not the commit-success condition.
+
+This substantially changes the remaining blocker:
+
+```text
+exact commit poll packet       RECOVERED
+xfer timeout                   RECOVERED (500 ms)
+hold duration                  RECOVERED (150 s)
+normal loop exit               RECOVERED (elapsed >= duration)
+reply payload success test     NONE in hold loop
+15-second cadence              progress/status only
+```
+
+The remaining work before a complete live flasher is now concentrated in reproducing the complete Session-A/Session-B sequencing, ACK/error behavior, and transition into/out of this recovered hold loop—not in discovering another hidden commit-success packet.
