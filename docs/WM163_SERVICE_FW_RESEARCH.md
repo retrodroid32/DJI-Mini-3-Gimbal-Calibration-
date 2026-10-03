@@ -817,3 +817,26 @@ and says it was obtained specifically because it enables Mini 3 gimbal calibrati
 This is substantially stronger evidence than filename inference: `V20.00.0100_wm163_dji_system` is a real Mini 3 / WM163 calibration firmware package reported in active repair use.
 
 The public sources inspected still do not expose its signed `wm163.cfg.sig` or module table, so a direct V20-vs-V30 manifest comparison remains pending.
+
+
+## Commit-hold static analysis update — 2026-10-03
+
+The recovered `Flasher._hold_for_commit` wrapper at `0x180012F20` dispatches to the native implementation beginning at approximately `0x1800131F0`. The implementation is large and performs repeated Python-object/method calls; it is **not** a single `sleep(150)` or a trivial one-packet loop.
+
+Additional PE/import correlation confirms that the routine repeatedly performs dynamic method lookups/calls and object comparisons during the hold period. This reinforces the earlier conclusion that the post-`B/FINALIZE` phase actively services transport traffic while the aircraft verifies/commits firmware.
+
+A search of the available conversation/library artifacts found **no actual Mini 3 service-flash USBPcap/pcapng capture**. Existing material includes Basic Calibration captures and textual service-flash reverse-engineering notes, but not a packet capture covering `B/FINALIZE -> _hold_for_commit()`.
+
+Therefore the live service flasher remains intentionally blocked at this exact boundary:
+
+```text
+B/FINALIZE (known)
+    |
+    v
+_hold_for_commit() (active traffic, exact packet semantics not yet proven)
+    |
+    v
+safe reboot/return to production firmware
+```
+
+Do not replace this missing behavior with a guessed keepalive or fixed sleep. A real DrGrey service-flash capture, or a fully resolved static reconstruction of the method calls inside `_hold_for_commit`, is still required before enabling live service flashing.
