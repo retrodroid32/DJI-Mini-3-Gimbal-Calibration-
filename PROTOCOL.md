@@ -352,3 +352,17 @@ The repair command is fail-closed:
 
 The separate bit-24 / diagnostic 40011 state is not claimed to be repaired by this
 flow.
+
+
+## v0.12.1 factory-state hold
+
+Later recovery material for `drgrey.ui.factory_fix` indicates that DrGrey's
+model-specific short 40021 routine reads factory state, enters/ensures a required
+factory/service state, performs the short 0x36 operation, validates/commits it,
+and finally restores/cleans up factory state.
+
+The exact DUML request(s), target(s), payload(s), and response semantics used by
+`_read_factory_state` and `_set_factory` remain unresolved in the static
+high-level reconstruction. Therefore the previously implemented live short write
+is disabled until those transactions are verified from packet capture or direct
+binary decoding. The dry-run packet builder is retained.
