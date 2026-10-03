@@ -1281,3 +1281,120 @@ Still to pin down before enabling a live flasher:
 - whether START/DATA/END all pass through precisely the same counter used by the 64-record cadence (the common send block strongly indicates this, but phase edges are still being traced);
 - exact ordering of control calls around each file and the final `00/0A`;
 - complete error/exception behavior if `write` or `drain` fails.
+
+
+## WM163 post-finalize hold packet fully recovered — 2026-10-03
+
+Direct reconstruction of Cython's compressed name/constant table in
+`mini3_service_flash.cp314-win_amd64.pyd` resolved the previously opaque globals
+used by `Flasher._hold_for_commit`.
+
+The module stores its names in a zlib-compressed table. Recovering that table maps
+the hold routine's data slots to:
+
+```text
+0x1800262D0 -> encode
+0x1800262B8 -> dst
+0x180026550 -> seq
+0x180026310 -> flags
+0x180026120 -> FLAG_REQ_ACK
+0x180026640 -> xfer
+0x1800265D8 -> timeout_ms
+0x1800265D0 -> time
+0x180026580 -> sleep
+```
+
+The integer-constant table also decodes the exact values used by the hold routine:
+
+```text
+0x180026780 -> 0
+0x180026788 -> 1
+0x1800267F0 -> 40 / 0x28
+0x180026860 -> 500
+0x180026778 -> 0.5
+```
+
+Cython's `encode` wrapper exposes the argument names/order as:
+
+```text
+encode(cmd_id, payload, dst, seq, flags, src)
+```
+
+with the module-wide `CMDSET` used internally.
+
+The constant positional tuple used by `_hold_for_commit` is reconstructed from
+module initialization as:
+
+```python
+(1, b"")
+```
+
+and the keyword dictionary is built as:
+
+```python
+{
+    "dst": 0x28,
+    "seq": 0,
+    "flags": FLAG_REQ_ACK,
+}
+```
+
+Therefore the exact post-finalize probe is now proven as:
+
+```python
+probe = encode(
+    0x01,
+    b"",
+    dst=0x28,
+    seq=0,
+    flags=FLAG_REQ_ACK,
+)
+```
+
+Because this module's global `CMDSET` is `0x00`, the wire-level command is:
+
+```text
+destination/raw node: 0x28
+CmdSet:              0x00 GENERAL
+CmdId:               0x01
+payload:             empty
+sequence:            0
+flags:               ACK requested
+```
+
+The routine then calls the same transport object's:
+
+```python
+self.t.xfer(probe, timeout_ms=500)
+```
+
+This resolves the previously missing CmdSet, CmdId, payload and timeout.
+
+### Hold-loop behavior
+
+The same recovered constant table proves:
+
+```text
+sleep interval = 0.5 seconds
+```
+
+The routine logs:
+
+```text
+//  holding the link while it applies (do NOT disconnect, up to %ds)…
+//  …applying, link alive (%.0fs)
+//  ✅ the drone rebooted (~%.0fs) — applying firmware
+//  wait ended (%ds): the drone did not reboot on its own — give it a few seconds
+```
+
+Static control flow shows the 0x00/0x01 probe is repeatedly sent through
+`xfer(..., timeout_ms=500)` while the link remains alive. A transport
+failure/no-response path during this phase is handled as the expected reboot
+transition and produces the `drone rebooted` message; if the requested hold
+duration expires while the link keeps answering, it emits the `wait ended`
+message instead.
+
+This removes the final unknown packet from the WM163 post-finalize hold phase.
+Before enabling live flashing, the remaining engineering task is to reproduce
+DrGrey's complete session sequencing/error handling around this now-proven probe
+and preserve the model/manifest/hash/ARB guards.
