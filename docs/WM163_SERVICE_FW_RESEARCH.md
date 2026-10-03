@@ -2654,3 +2654,51 @@ _stream:
 ```
 
 `match_ack` remains the previously recovered predicate requiring response flag, matching command ID, and matching sequence number. The exact interpretation of a matched control ACK payload as accepted versus rejected is a separate remaining detail; the binary contains the recovered error fragments `%s: no response from the drone` and `: rejected (` but that payload-status check is not asserted here until fully mapped.
+
+
+## `_ctrl` matched-ACK payload acceptance recovered — 2026-10-03
+
+Static tracing of `Flasher._ctrl` resolves the remaining device-side
+accept/reject rule after `match_ack(...)` has found a response with the
+expected command id and sequence.
+
+The matched frame's `payload` is sliced as:
+
+```python
+status = frame.payload[:1]
+```
+
+DrGrey accepts either of these two values:
+
+```python
+status == b""
+status == b"\x00"
+```
+
+Thus the effective control-ACK rule is:
+
+```python
+frame = match_ack(received, want_seq=seq, want_cmd=cmd_id)
+if frame is None:
+    # continue collecting with drain(400), then eventually
+    # raise the recovered "no response from the drone" failure
+    ...
+
+status = frame.payload[:1]
+if status not in (b"", b"\x00"):
+    raise FlashError(f"{what}: rejected (...)")
+```
+
+The native rejection branch re-reads the frame payload and formats a hex
+preview into the recovered `: rejected (` diagnostic. The exact preview
+slice length is diagnostic-only and is not required to reproduce the
+accept/reject safety predicate.
+
+This check belongs to `_ctrl`. The separately recovered `_stream` path
+requires a matching ACK but does not perform this same leading-payload-status
+acceptance test.
+
+The transport-agnostic implementation now exposes
+`ctrl_ack_payload_accepted(payload)` so a future guarded flasher can fail
+closed on an explicit non-zero control status without enabling any live write
+path.
