@@ -321,3 +321,34 @@ For payload `80 00 00 01` the 32-bit value is `0x01000080`, so exactly those
 two diagnostic bits are set. This provides protocol-level confirmation of the
 same two errors shown by DJI Fly after reboot, despite the separate
 AutoCalibrationStatus stream reaching `64 00` (100%, success).
+
+
+## Recovered WM163 short repair for diagnostic 40021
+
+DrGrey 1.5.2 static constants and embedded documentation identify a bank-confirmed
+Mini 3 / WM163 short repair for an active 40021:
+
+- target: GIMBAL / receiver type 4
+- request: `0x04/0x36`
+- payload: `42 e9 7f 3f`
+- accepted result: response packet with zero payload bytes
+- then reboot: GENERAL `0x00/0x0B`, empty payload, BATTERY/PMU receiver type 11
+- verify only after the aircraft reboots and reconnects
+
+A USBPcap capture of DrGrey's Basic Calibration and device-info operations showed
+all 15 distinct host request forms in that session using DUML ACK_AFTER_EXEC.
+That includes its GIMBAL `0x04/0x08` JointCoarse request, which appeared on the
+wire with cmd-type byte `0x40`. v0.12.0 therefore uses ACK_AFTER_EXEC for both
+the recovered short write and the reboot request.
+
+The repair command is fail-closed:
+
+- it requires a live `0x00/0xF1` gimbal status with bit 7 set;
+- it sends only the four-byte WM163 payload;
+- it requires an exact sequence-matched empty response from `0x04/0x36`;
+- it does not reboot after no reply or a non-empty reply;
+- it does not send the 168-byte matrix form;
+- it does not send the beta `0x04/0x68` save command.
+
+The separate bit-24 / diagnostic 40011 state is not claimed to be repaired by this
+flow.
