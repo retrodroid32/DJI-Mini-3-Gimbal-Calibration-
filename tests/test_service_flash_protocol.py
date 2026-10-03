@@ -166,6 +166,7 @@ def test_known_v30_session_b_record_and_finalize_sequence_invariants():
 def test_recovered_sequence_defaults_and_drain_cadence():
     from wm163_service_flash_protocol import (
         SESSION_A_SEQ0,
+        SESSION_A_LOADER_WAIT_SECONDS,
         SESSION_B_SEQ0,
         SESSION_B_TIMEOUT_SECONDS,
         SESSION_B_DRAIN_EVERY_RECORDS,
@@ -174,6 +175,7 @@ def test_recovered_sequence_defaults_and_drain_cadence():
     )
 
     assert SESSION_A_SEQ0 == 0x4900
+    assert SESSION_A_LOADER_WAIT_SECONDS == 60
     assert SESSION_B_SEQ0 == 0x3022
     assert SESSION_B_TIMEOUT_SECONDS == 180
     assert SESSION_B_DRAIN_EVERY_RECORDS == 64
