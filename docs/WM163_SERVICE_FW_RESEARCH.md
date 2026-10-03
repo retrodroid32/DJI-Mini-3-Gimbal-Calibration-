@@ -2146,7 +2146,7 @@ with no worker-level transport/flasher reconstruction between the two sessions.
 
 The recovered Cython name table contains no worker API names for `open`, `close`, or `reconnect`, and—more importantly—the native path between the successful `session_a` return and the `session_b` call contains no transport constructor or replacement assignment. The same object graph remains live across the loader handoff.
 
-This means a faithful implementation must not automatically close/reopen the COM transport between Session A and Session B unless later lower-level evidence specifically requires it. Session A's internal wait for the temporary `WM163 UAV` loader is part of the handoff while the existing transport/flasher state is retained.
+This means a faithful implementation must not automatically close/reopen the COM transport between Session A and Session B unless later lower-level evidence specifically requires it. The temporary `WM163 UAV` wait occurs at the beginning of `session_b()` while the existing transport/flasher state is retained.
 
 ### Failure propagation at the boundary
 
@@ -2322,7 +2322,7 @@ Together with the previous object-lifetime result, the Session-A -> loader -> Se
 ```text
 same EngineTransport
 same Flasher
-Session A waits for loader transition internally
+Session B performs the loader-ready wait before B/ENTER
 no worker-level close/reopen
 normal Session-A return -> immediate Session-B call
 Session-A exception -> abort
