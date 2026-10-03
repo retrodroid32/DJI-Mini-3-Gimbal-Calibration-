@@ -184,3 +184,61 @@ The current reverse-engineering priority is therefore:
 3. trace the values constructed by `_ctrl`;
 4. identify the slice/packing operation inside `_stream`;
 5. only then assign chunk size, offset/index header and finalize payload semantics.
+
+
+## Recovered transport constants
+
+Direct reconstruction of Cython's module-initialization integer table resolves the following exported constants:
+
+- `CMDSET = 0x00`
+- `HOST = 0x2A`
+- `FLAG_REQ_ACK = 0x40`
+- `FLAG_RESP = 0x80`
+- `CHUNK = 980` bytes (`0x03D4`)
+- `CONFIRM = "FLASH-MINI3"`
+
+These values are no longer inferred from nearby immediates. Cython constructs a 37-entry Python integer table at module initialization. The relevant indexes decode as:
+
+- index 0 -> `0x00` -> `CMDSET`
+- index 15 -> `0x2A` -> `HOST`
+- index 17 -> `0x40` -> `FLAG_REQ_ACK`
+- index 20 -> `0x80` -> `FLAG_RESP`
+- index 29 -> `0x03D4` -> `CHUNK`
+
+The `CONFIRM` value points to recovered Cython string index 12, which is exactly `FLASH-MINI3`.
+
+This corrects an earlier ambiguity: the `0x80` immediate is the response flag, **not** the firmware chunk size. DrGrey's exported chunk constant is 980 bytes.
+
+### Cython integer table recovered
+
+The 37 module integers, in construction order, are:
+
+```text
+00 01 02 03 04 07 08 09 0A 0B 0C 0D 0F 14 28 2A
+3C 40 55 77
+0080 008C 0096 00B4 00C8 00FF 012C 0190 01F4 03D4
+03E8 0FA0 3022 3692 4900 8408 FFFF
+```
+
+Not every integer has been assigned a semantic name yet.
+
+## Recovered method argument signatures
+
+The Cython argument-name table at the start of both native functions resolves:
+
+```text
+Flasher._ctrl(self, cmd_id, payload, dst, seq, what, timeout_ms)
+Flasher._stream(self, cmd_id, payload, dst, seq, what, timeout_ms)
+```
+
+This is based on exact string-object addresses used by the Cython argument parser:
+
+- `self`
+- `cmd_id`
+- `payload`
+- `dst`
+- `seq`
+- `what`
+- `timeout_ms`
+
+This strongly indicates that `_ctrl` and `_stream` share the same packet-level call contract, with the distinction in how the payload is transmitted/acknowledged.
