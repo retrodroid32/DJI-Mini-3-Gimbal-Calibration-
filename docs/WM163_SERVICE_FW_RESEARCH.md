@@ -1972,3 +1972,47 @@ SESSION B
 ```
 
 This removes sequence carry-over from the handoff/reconnect blocker. What remains to prove at the higher-level worker is transport-object lifetime/reuse and exact failure/reconnect behavior around the moment Session A observes the `WM163 UAV` loader and returns to the worker.
+
+
+## Deterministic Session-A transfer count / terminal sequence — 2026-10-03
+
+The recovered bundled loader and chunk size allow the complete Session-A record count to be calculated without guessing:
+
+```text
+loader size = 743,120 bytes
+CHUNK       = 980 bytes
+```
+
+Therefore:
+
+```text
+758 full DATA records × 980 bytes = 742,840 bytes
+1 final DATA record               =     280 bytes
+-----------------------------------------------
+DATA records total                =     759
+```
+
+Session-A sequence-consuming operations are:
+
+```text
+1   A/ENTER
+1   A/PREPARE
+1   A/REPORT_SIZE
+759 A/DATA
+1   A/CMD_0A (loader MD5 verify)
+1   A/CMD_0B (execute/reboot loader)
+-----------------------------------
+764 operations
+```
+
+With the proven Session-A seed `0x4900` and one modulo-16-bit increment after each successful operation, the expected next-unused Session-A sequence after A/CMD_0B is:
+
+```text
+0x4900 + 764 = 0x4BFC
+```
+
+No wrap occurs in this transfer.
+
+This is useful as an offline consistency check: a faithful Session-A implementation should emit 759 loader DATA records, the final DATA payload should carry 280 loader bytes, and the sequence state immediately after the final A/CMD_0B success should be `0x4BFC` before the code waits for the `WM163 UAV` loader identity.
+
+Session B still begins independently at its recovered fixed seed `0x3022`; it does not inherit `0x4BFC`.
