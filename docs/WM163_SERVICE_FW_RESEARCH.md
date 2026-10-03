@@ -242,3 +242,98 @@ This is based on exact string-object addresses used by the Cython argument parse
 - `timeout_ms`
 
 This strongly indicates that `_ctrl` and `_stream` share the same packet-level call contract, with the distinction in how the payload is transmitted/acknowledged.
+
+
+## Recovered ACK matching semantics
+
+`match_ack(bufs, want_seq, want_cmd)` decodes received frames and returns a frame only when all of the following are true:
+
+1. `frame.cmd_id == want_cmd`
+2. `frame.is_response()` is true
+3. `frame.seq == want_seq`
+
+`Frame.is_response()` tests the recovered `FLAG_RESP = 0x80`.
+
+Therefore DrGrey's lockstep ACK gate is at least:
+
+```python
+(frame.flags & 0x80) != 0
+and frame.cmd_id == want_cmd
+and frame.seq == want_seq
+```
+
+No source/destination equality check has yet been proven inside `match_ack` itself.
+
+## Session-A call reconstruction
+
+Because the recovered native signature is:
+
+```text
+Flasher._ctrl(self, cmd_id, payload, dst, seq, what, timeout_ms)
+```
+
+and the Session-A call sites pass six positional values total (omitting the default timeout), the argument arrays can be mapped directly.
+
+### A/ENTER
+
+High-confidence native reconstruction:
+
+```python
+self._ctrl(
+    cmd_id=0x07,
+    payload=b"\x00" * 9,
+    dst=0xA9,
+    seq=<runtime sequence>,
+    what="A/ENTER",
+)
+```
+
+Evidence:
+
+- command object resolves to Cython integer-table index 5 = `0x07`
+- payload object resolves to recovered bytes-string index 228 = nine zero bytes
+- destination is constructed from immediate `0xA9`
+- label is the exact recovered string `A/ENTER`
+
+This matches DJI GENERAL `0x00/0x07` Enter Loader, but the wire arguments above come from DrGrey's native call site rather than from the public name alone.
+
+### A/PREPARE
+
+High-confidence native reconstruction:
+
+```python
+self._ctrl(
+    cmd_id=0x0C,
+    payload=b"\x00",
+    dst=0xA9,
+    seq=<runtime sequence>,
+    what="A/PREPARE",
+)
+```
+
+Evidence:
+
+- command object address maps to integer-table index 10 = `0x0C`
+- payload object maps to recovered bytes-string index 226 = one zero byte
+- destination is `0xA9`
+- label is exactly `A/PREPARE`
+
+This is intentionally documented as DrGrey's actual `A/PREPARE` call. It must not be rewritten to public command `0x08` merely because DJI's generic command table calls `0x08` "Update Confirm / Prepare".
+
+### A/REPORT_SIZE
+
+The call site strongly identifies command object integer-table index 6 = `0x08` and label `A/REPORT_SIZE`, with destination `0xA9`.
+
+The exact payload is still being traced backward through the preceding `struct.pack` construction and is not yet asserted here.
+
+### A/CMD_0A
+
+The call site resolves the command object to integer-table index 8 = `0x0A`, destination `0xA9`, and label `A/CMD_0A`.
+
+Exact payload still unresolved.
+
+### A/CMD_0B
+
+The call site resolves the command object to integer-table index 9 = `0x0B`, destination `0xA9`, and label `A/CMD_0B`.
+
+Exact payload still unresolved.
