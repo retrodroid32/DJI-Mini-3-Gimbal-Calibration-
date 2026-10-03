@@ -9,6 +9,7 @@ from mini3_gimbal_cal import (
     CALIB_COMMANDS,
     CMD_ID_GENERAL_REBOOT,
     CMD_ID_GIMBAL_WRITE_IMU,
+    CMD_ID_GIMBAL_READ_IMU,
     CMD_SET_GENERAL,
     CMD_SET_ZENMUSE,
     COMM_DEV_BATTERY,
@@ -286,4 +287,24 @@ def test_builds_recovered_wm163_40021_reboot_packet():
     assert frame.encrypt_type == 0
     assert frame.cmd_set == 0x00
     assert frame.cmd_id == 0x0B
+    assert frame.payload == b""
+
+
+def test_builds_read_only_wm163_gimbal_imu_probe_packet():
+    pkt = build_packet(
+        seq=0x5151,
+        payload=b"",
+        receiver=COMM_DEV_GIMBAL,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_READ_IMU,
+    )
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.receiver == 4
+    assert frame.seq == 0x5151
+    assert frame.packet_type == 0
+    assert frame.ack_type == ACK_AFTER_EXEC
+    assert frame.cmd_set == 0x04
+    assert frame.cmd_id == 0x51
     assert frame.payload == b""
