@@ -767,3 +767,53 @@ wm163.cfg.sig
 A manifest alone is sufficient to compare formal version, ARB fields, module order, module versions, sizes and MD5 entries against the validated V30.00.0100 package.
 
 As of this search, no public GitHub code result or indexed web result exposed that exact V20 WM163 file or `wm163.cfg.sig`. Do not invent a V20 module table from nearby Mini 3 Pro / WM162 packages.
+
+
+## Duplicate V30 package confirmation and exact V20 evidence — 2026-10-03
+
+A second user-supplied file, `mini3(5).bin`, was inspected offline.
+
+It is **byte-for-byte identical** to the previously validated V30 WM163 package:
+
+```text
+size   52,019,200 bytes
+MD5    7895303d687618766cc06efe405cf082
+SHA256 c6c88d49c6da0026a9498d07f04a3db41ef8a8d650a5bbaf22de574dc8e60b26
+```
+
+Its embedded signed manifest again identifies:
+
+```text
+device = wm163
+formal = 30.00.0100
+release = 30.00.0100
+antirollback = 0
+```
+
+Therefore `mini3(5).bin` is not the missing V20 image; it is another copy of the already validated V30.00.0100 service/calibration package.
+
+### Exact public evidence that V20 WM163 exists
+
+A MavicPilots Mini 3 repair thread dated July 25, 2026 explicitly states:
+
+```text
+firmware calibration V20.00.0100_wm163
+```
+
+The poster then identifies the aircraft and target as:
+
+```text
+Mini 3 and the Gimbal
+```
+
+A separate indexed 4PDA Mini 3 discussion independently names:
+
+```text
+V20.00.0100_wm163_dji_system
+```
+
+and says it was obtained specifically because it enables Mini 3 gimbal calibration.
+
+This is substantially stronger evidence than filename inference: `V20.00.0100_wm163_dji_system` is a real Mini 3 / WM163 calibration firmware package reported in active repair use.
+
+The public sources inspected still do not expose its signed `wm163.cfg.sig` or module table, so a direct V20-vs-V30 manifest comparison remains pending.
