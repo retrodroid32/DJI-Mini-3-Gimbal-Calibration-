@@ -2761,3 +2761,58 @@ is an explicit device-side rejection.
 This means a guarded implementation must **not** attempt FINALIZE after any
 stream/write/drain exception, and must **not** interpret a non-zero FINALIZE
 status as success.
+
+
+## Commit-hold empty-response vs transport-loss semantics recovered — 2026-10-03
+
+The post-FINALIZE `_hold_for_commit()` success/transition semantics are now
+narrowed further by combining the recovered `EngineTransport.xfer()` behavior
+with the native hold loop.
+
+For the WM163 serial transport, `EngineTransport.xfer()` distinguishes:
+
+```text
+underlying call returns no response parts
+    -> xfer() returns b""
+
+underlying transport raises / returns NULL
+    -> exception propagates
+```
+
+The commit-hold loop calls the already-recovered probe:
+
+```python
+00/01 -> dst 0x28
+seq = 0
+flags = 0x40
+payload = b""
+xfer timeout = 500 ms
+```
+
+and does **not** inspect the returned response bytes for ACK content or any
+identity/status marker. Therefore a normal `b""` return from `xfer()` is
+not, by itself, treated as proof that the aircraft rebooted. The hold loop may
+continue after such an empty response window.
+
+The separate transport-exception path is what corresponds to the expected
+loss of the temporary loader/application link during reboot/transition. That
+path is intentionally distinct from an ordinary empty response result.
+
+The resulting recovered distinction is:
+
+```text
+xfer returns normally (including b"")
+    -> link call completed normally
+    -> continue hold-loop timing/probing logic
+
+xfer raises transport exception / link disappears
+    -> enter recovered reboot/application-transition path
+```
+
+If the hold reaches its configured maximum (default 150 s) without observing
+the transport-loss transition, DrGrey reports that the aircraft did not reboot
+automatically and advises allowing additional time. That timeout condition is
+not equivalent to a positively confirmed reboot.
+
+A guarded reimplementation should preserve this distinction and must not
+promote a single empty 500-ms receive window into a false reboot-success signal.
