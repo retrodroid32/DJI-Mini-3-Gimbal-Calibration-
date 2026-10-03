@@ -78,3 +78,40 @@ def test_has_service_fw_is_catalog_only_not_arb_gate():
     # ARB enforcement belongs to select_service_fw(), not has_service_fw().
     fw, _ = select_service_fw("WM163", "31.00.0000")
     assert fw is None
+
+
+def test_manifest_derived_arb_guard_uses_aircraft_formal_version_only():
+    from wm163_service_fw_policy import select_service_fw_from_aircraft_manifest
+
+    fw, note = select_service_fw_from_aircraft_manifest(
+        "WM163", {"formal": "01.00.0500"}
+    )
+    assert fw is not None
+    assert fw.filename == "mini3_service.bin"
+    assert "ARB compatible" in note
+
+    fw2, note2 = select_service_fw_from_aircraft_manifest(
+        "WM163", {"firmware": {"formal": "31.00.0000"}}
+    )
+    assert fw2 is None
+    assert "ARB bloquea" in note2
+
+
+def test_manifest_derived_arb_guard_fails_closed_without_formal():
+    from wm163_service_fw_policy import select_service_fw_from_aircraft_manifest
+
+    fw, note = select_service_fw_from_aircraft_manifest("WM163", None)
+    assert fw is None
+    assert "cfg.sig FORMAL" in note
+
+    fw2, note2 = select_service_fw_from_aircraft_manifest(
+        "WM163",
+        {
+            "modules": [
+                {"id": "0306", "app": "0x03040b22"},
+                {"id": "0100", "app": "0x01400098"},
+            ]
+        },
+    )
+    assert fw2 is None
+    assert "Module app/loader versions are not valid substitutes" in note2
