@@ -346,3 +346,16 @@ python mini3_gimbal_cal.py -v diagnose-gimbal --port COM23 --seconds 5
 
 This flow is specifically evidence-backed for **40021**. It does not claim to
 clear the separate **40011 CALIBRATE_ERROR** service/factory-calibration fault.
+
+
+### v0.12.1 safety hold after fuller DrGrey recovery
+
+A fuller recovery of `drgrey.ui.factory_fix` shows that the short 40021 routine
+is wrapped by factory/service-state handling before and after the short 0x36
+operation. The exact wire transactions behind `_read_factory_state` and
+`_set_factory` are not yet decoded with enough confidence to reproduce them.
+
+Because the earlier v0.12.0 live command omitted that wrapper, v0.12.1 disables
+`fix-imu-40021-short` from transmitting. `dry-run-40021` remains available for
+packet inspection. No 168-byte matrix, serial push, or 0x68 save operation is
+enabled.
