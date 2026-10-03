@@ -262,3 +262,17 @@ def test_recovered_ctrl_and_stream_ack_deadlines():
     assert CTRL_ACK_DEADLINE_SECONDS == 15
     assert STREAM_ACK_DEADLINE_SECONDS == 20
     assert ACK_COLLECT_DRAIN_MS == 400
+
+
+def test_recovered_ctrl_ack_payload_status_rule():
+    from wm163_service_flash_protocol import ctrl_ack_payload_accepted
+
+    # DrGrey _ctrl accepts an ACK with no status byte, or a leading success 0.
+    assert ctrl_ack_payload_accepted(b"")
+    assert ctrl_ack_payload_accepted(b"\x00")
+    assert ctrl_ack_payload_accepted(b"\x00trailing-data")
+
+    # Any non-zero first status byte is a device-side rejection.
+    assert not ctrl_ack_payload_accepted(b"\x01")
+    assert not ctrl_ack_payload_accepted(b"\x02details")
+    assert not ctrl_ack_payload_accepted(b"\xff")
