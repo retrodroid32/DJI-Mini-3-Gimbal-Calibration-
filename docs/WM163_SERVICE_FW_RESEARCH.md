@@ -2016,3 +2016,66 @@ No wrap occurs in this transfer.
 This is useful as an offline consistency check: a faithful Session-A implementation should emit 759 loader DATA records, the final DATA payload should carry 280 loader bytes, and the sequence state immediately after the final A/CMD_0B success should be `0x4BFC` before the code waits for the `WM163 UAV` loader identity.
 
 Session B still begins independently at its recovered fixed seed `0x3022`; it does not inherit `0x4BFC`.
+
+
+## Exact known-V30 Session-B record count and FINALIZE sequence — 2026-10-03
+
+Using the validated WM163 V30.00.0100 signed member sizes, recovered `CHUNK = 980`, recovered gray ordering, and the now-proven shared Session-B sequence counter, the complete Session-B record count can be derived exactly.
+
+Signed transfer sizes and DATA-record counts:
+
+```text
+wm163.cfg.sig      2,336 bytes ->     3 DATA records
+0100          39,459,264 bytes -> 40,265 DATA records
+0105             245,824 bytes ->   251 DATA records
+0306           1,760,032 bytes -> 1,796 DATA records
+0905          10,390,912 bytes ->10,603 DATA records
+1100              94,720 bytes ->    97 DATA records
+1200              56,352 bytes ->    58 DATA records
+----------------------------------------------------
+DATA total                         53,073 records
+```
+
+Each of the seven files also consumes one START and one END record:
+
+```text
+53,073 DATA
++    7 START
++    7 END
+----------------
+53,087 total 0x2A records
+```
+
+Session B begins at `seq0 = 0x3022`:
+
+```text
+B/ENTER       seq 0x3022
+B/REPORT_SIZE seq 0x3023
+first START   seq 0x3024
+```
+
+After all 53,087 0x2A records consume and advance that same counter, the exact sequence presented to B/FINALIZE is:
+
+```text
+(0x3024 + 53,087) & 0xFFFF = 0xFF83
+```
+
+Therefore for the exact validated V30 archive:
+
+```text
+B/FINALIZE seq = 0xFF83
+next seq       = 0xFF84   # if advanced after finalize
+```
+
+No 16-bit wrap occurs until very near the end; the stream remains below `0x10000` and finalizes at `0xFF83`.
+
+The 64-record receive-service cadence produces:
+
+```text
+53,087 // 64 = 829 periodic drain boundaries
+53,087 % 64  = 31 records after the last 64-record boundary
+```
+
+followed by the separately recovered end-of-iterator `drain(300)` before the final control phase.
+
+This gives a strong offline invariant for a faithful V30 transfer implementation: wrong file ordering, wrong chunk size, omitted START/END, accidental tar-padding transfer, or an incorrect sequence increment will cause the calculated B/FINALIZE sequence to differ from `0xFF83`.
