@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.12.0"
+VERSION = "0.12.1"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -1539,21 +1539,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         return run_auto_cal_capture(args.port, args.baudrate, args.seconds, args.verbose)
 
     if args.action == "fix-imu-40021-short":
-        if not args.yes:
-            parser.error(
-                "refusing to write the recovered 40021 repair value without --yes; "
-                "verify the aircraft is DJI Mini 3 / WM163 and remove the propellers"
-            )
-        print("WARNING: This writes gimbal IMU service data and then reboots the aircraft.")
-        print("Use only on DJI Mini 3 / WM163 with active diagnostic 40021.")
-        print("Remove propellers and do not disconnect USB until the reboot command is sent.")
-        return run_fix_imu_40021_short(
-            args.port,
-            args.baudrate,
-            args.precheck_seconds,
-            args.reply_timeout_seconds,
-            args.verbose,
+        print(
+            "DISABLED in v0.12.1: newer recovery evidence shows DrGrey wraps the short "
+            "40021 operation in factory/service-state handling whose exact wire "
+            "transactions are not yet decoded.",
+            file=sys.stderr,
         )
+        print(
+            "No write was sent. Use dry-run-40021 only until _read_factory_state / "
+            "_set_factory are capture- or disassembly-verified.",
+            file=sys.stderr,
+        )
+        return 12
 
     if not args.yes:
         parser.error(
