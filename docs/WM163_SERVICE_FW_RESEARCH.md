@@ -531,3 +531,125 @@ This completes the known Session-A wire payload sequence:
 0x0A A/CMD_0A      00 + MD5(loader).digest()
 0x0B A/CMD_0B      00 01 + <I 1000> + "DEADBEEF"
 ```
+
+
+## Session-B loader-specific file protocol
+
+Session B does **not** reuse Session A's `0x09` firmware-data records for the service-image contents.
+
+After `B/ENTER` and `B/REPORT_SIZE`, DrGrey sends loader-specific records using:
+
+```text
+cmd_id = 0x2A
+dst    = 0x01
+```
+
+The temporary WM163 loader interprets the first payload byte as a record type.
+
+### File iteration model
+
+The native loop iterates `(name, blob)` pairs.
+
+For each item:
+
+- `name` is encoded to bytes with `name.encode()`
+- `blob` is the file/module content
+- data chunks use the recovered exported `CHUNK = 980` bytes
+
+### Record type 0x01 — FILE START
+
+The native payload construction is:
+
+```python
+name_bytes = name.encode()
+
+payload = (
+    b"\x01"
+    + struct.pack("<I", len(blob))
+    + bytes([len(name_bytes) + 1])
+    + name_bytes
+    + b"\x00" * 4
+)
+```
+
+Important implementation detail: Cython constructs a one-element Python list containing `len(name_bytes)+1` and passes that list to `bytes(...)`. Therefore this field is one length byte; it is **not** a zero-filled byte array of that size.
+
+The file-start record is sent with command `0x2A`, destination `0x01`, and label `B file-start %s`.
+
+### Record type 0x02 — FILE DATA
+
+The native loop is equivalent to:
+
+```python
+for offset in range(0, len(blob), CHUNK):
+    chunk = blob[offset:offset + CHUNK]
+```
+
+The 32-bit packed offset is explicitly sliced to its first three bytes before being appended to the payload:
+
+```python
+payload = (
+    b"\x02"
+    + struct.pack("<I", offset)[:3]
+    + b"\x00"
+    + chunk
+)
+```
+
+Therefore the file-data header is exactly five bytes:
+
+```text
+02 | offset[7:0] | offset[15:8] | offset[23:16] | 00
+```
+
+followed by at most 980 file bytes.
+
+For these data records the native code calls `encode(...)` directly with:
+
+- `cmd_id = 0x2A`
+- payload above
+- `dst = 0x01`
+- runtime sequence
+- `flags = FLAG_REQ_ACK = 0x40`
+
+and then writes the encoded packet through `transport.write(...)`.
+
+This differs from the file-start/file-end control path and is the reason the exact Session-B ACK/window loop still needs to be decoded separately.
+
+### Record type 0x03 — FILE END
+
+The native code computes the MD5 of the current `blob` and sends:
+
+```python
+payload = (
+    b"\x03"
+    + hashlib.md5(blob).digest()
+)
+```
+
+Total payload length: 17 bytes.
+
+The file-end record uses command `0x2A`, destination `0x01`, and label `B file-end %s`.
+
+### Session-B record summary
+
+```text
+START:
+01
++ uint32_le(file_size)
++ uint8(len(filename_bytes)+1)
++ filename_bytes
++ 00 00 00 00
+
+DATA:
+02
++ uint24_le(offset)
++ 00
++ data[0..980]
+
+END:
+03
++ MD5(file_bytes).digest()
+```
+
+The exact in-flight window, ACK collection, timeout and abort semantics for DATA records remain under active reconstruction and are intentionally not asserted yet.
