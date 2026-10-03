@@ -30,6 +30,7 @@ from mini3_gimbal_cal import (
     describe_common_device_id_payload,
     describe_fc_device_info_payload,
     describe_gimbal_serial_payload,
+    describe_general_version_inquiry_payload,
     describe_general_serial_payload,
     describe_payload,
     parse_flightlog_identity,
@@ -329,3 +330,35 @@ def test_decodes_observed_wm163_0x51_layout():
     assert abs(values[1] - (-0.006678410805761814)) < 1e-12
     assert values[4] == 1.0
     assert trailer == bytes.fromhex("52 02 3c")
+
+
+def test_builds_indexed_version_inquiry_for_recovered_0306_target():
+    pkt = build_packet(
+        seq=0x3060,
+        payload=b"",
+        receiver=3,
+        receiver_index=6,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=0x01,
+    )
+    assert pkt[5] == 0xC3
+    frame = parse_frame(pkt)
+    assert frame.receiver == 3
+    assert frame.receiver_index == 6
+    assert frame.cmd_set == 0x00
+    assert frame.cmd_id == 0x01
+    assert frame.payload == b""
+
+
+def test_describes_general_version_inquiry_payload():
+    payload = (
+        bytes.fromhex("00 00")
+        + b"WM163_TEST\x00\x00\x00\x00\x00\x00"
+        + bytes.fromhex("04 03 02 01 08 07 06 05 aa bb")
+    )
+    desc = describe_general_version_inquiry_payload(payload)
+    assert "WM163_TEST" in desc
+    assert "loader=0x01020304" in desc
+    assert "app=0x05060708" in desc
+    assert "extra=aa bb" in desc
