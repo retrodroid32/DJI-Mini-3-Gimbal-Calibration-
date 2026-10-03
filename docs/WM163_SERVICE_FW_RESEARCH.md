@@ -337,3 +337,120 @@ Exact payload still unresolved.
 The call site resolves the command object to integer-table index 9 = `0x0B`, destination `0xA9`, and label `A/CMD_0B`.
 
 Exact payload still unresolved.
+
+
+## Session-A payload reconstruction
+
+### A/REPORT_SIZE
+
+The native construction is now recovered:
+
+```python
+payload = (
+    b"\x00"
+    + struct.pack("<I", len(loader))
+    + b"\x00" * 6
+    + b"\x01\x00"
+)
+
+self._ctrl(
+    cmd_id=0x08,
+    payload=payload,
+    dst=0xA9,
+    seq=<runtime sequence>,
+    what="A/REPORT_SIZE",
+)
+```
+
+Total payload length is 13 bytes.
+
+The `<I` format comes from recovered string index 14, and the loader length is obtained from the Session-A loader object immediately before the `struct.pack` call.
+
+### A/CMD_0A
+
+The native code constructs an MD5 digest of the Session-A loader and sends:
+
+```python
+payload = b"\x00" + hashlib.md5(loader).digest()
+
+self._ctrl(
+    cmd_id=0x0A,
+    payload=payload,
+    dst=0xA9,
+    seq=<runtime sequence>,
+    what="A/CMD_0A",
+)
+```
+
+The payload is therefore 17 bytes: one leading zero byte plus the 16-byte binary MD5 digest.
+
+This is consistent with DrGrey independently validating the bundled loader against its expected MD5 before use.
+
+### A/CMD_0B
+
+The payload construction is now narrowed to:
+
+```text
+00 01 + struct.pack(...) + ASCII "DEADBEEF"
+```
+
+The command is `0x0B`, destination `0xA9`, label `A/CMD_0B`.
+
+The packed numeric field is still being traced and is not asserted yet.
+
+## Session-B control reconstruction
+
+Session B explicitly sets its destination/node value to `0x01`.
+
+### B/ENTER
+
+```python
+self._ctrl(
+    cmd_id=0x07,
+    payload=b"\x00" * 9,
+    dst=0x01,
+    seq=<runtime sequence>,
+    what="B/ENTER",
+)
+```
+
+### B/REPORT_SIZE
+
+The native construction mirrors Session A but uses a different two-byte trailer:
+
+```python
+payload = (
+    b"\x00"
+    + struct.pack("<I", total_size)
+    + b"\x00" * 6
+    + b"\x01\x02"
+)
+
+self._ctrl(
+    cmd_id=0x08,
+    payload=payload,
+    dst=0x01,
+    seq=<runtime sequence>,
+    what="B/REPORT_SIZE",
+)
+```
+
+Total payload length is 13 bytes.
+
+The Session-A trailer is `01 00`; the Session-B trailer is `01 02`.
+
+### B/FINALIZE
+
+The recovered call is:
+
+```python
+self._ctrl(
+    cmd_id=0x0A,
+    payload=b"\x00" * 17,
+    dst=0x01,
+    seq=<runtime sequence>,
+    what="B/FINALIZE",
+)
+```
+
+This is stronger than the earlier generic assumption that Session B merely uses a standard empty Update-Finish packet: DrGrey sends an explicit 17-byte all-zero payload.
