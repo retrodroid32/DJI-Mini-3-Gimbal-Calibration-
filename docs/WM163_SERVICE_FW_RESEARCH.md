@@ -937,3 +937,45 @@ Next static target:
 5. only then implement the post-finalize hold in the native WM163 flasher.
 
 No live service-flash entrypoint should be enabled until that argument vector is fully proven.
+
+
+## Mini 3 vs Mini 3 Pro commit-loop differential — 2026-10-03
+
+The Mini 3 Pro service-flash method table was mapped further:
+
+```text
+Flasher.finalize          -> 0x180012F00
+Flasher.monitor_install   -> 0x180013700
+Flasher._hold_for_commit  -> 0x180017230 wrapper
+native hold body          -> ~0x180017500
+```
+
+The WM163 Mini 3 hold body remains:
+
+```text
+Flasher._hold_for_commit  -> 0x180012F20 wrapper
+native hold body          -> ~0x1800131F0
+```
+
+A normalized instruction-stream comparison was performed after stripping absolute branch/data addresses.
+
+Result:
+
+```text
+Mini 3 hold instructions:      2929
+Mini 3 Pro hold instructions:  2909
+SequenceMatcher ratio:         ~0.3104
+```
+
+There are several substantial matching blocks, confirming related/generated control-flow structure, but the routines are **not close enough to justify copying the Mini 3 Pro post-finalize packet/behavior into WM163**.
+
+This is an important anti-brick constraint:
+
+```text
+Mini 3 Pro implementation = useful differential/reference
+Mini 3 Pro implementation != proof of WM163 packet semantics
+```
+
+The Mini 3 Pro `finalize()` and `monitor_install()` wrappers provide additional anchors immediately before its hold routine, but their dynamically-resolved Python constants/arguments still need reconstruction before they can be compared meaningfully with the WM163 argument vector.
+
+No WM162/WM163 cross-use should be implemented from structural similarity alone.
