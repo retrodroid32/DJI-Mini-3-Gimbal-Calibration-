@@ -653,3 +653,49 @@ END:
 ```
 
 The exact in-flight window, ACK collection, timeout and abort semantics for DATA records remain under active reconstruction and are intentionally not asserted yet.
+
+
+## Candidate WM163 service package supplied 2026-10-03
+
+A user-supplied file named `mini3(4).bin` was inspected offline only. It is a valid POSIX tar archive and its signed configuration manifest identifies:
+
+```text
+device = wm163
+firmware formal = 30.00.0100
+release version = 30.00.0100
+antirollback = 0
+antirollback_ext = cn:0
+enforce = 0
+```
+
+This is significant because `30.00.0100` is one of the formal-version strings statically recovered from `drgrey.service_fw`, and DrGrey expects the Mini 3 service image under the external catalog name `mini3_service.bin`.
+
+The archive contains these six signed modules:
+
+| Order | Module | Version | Size |
+|---:|---|---|---:|
+| 1 | 0905 | 01.00.01.27 | 10,390,912 |
+| 2 | 0306 | 03.04.11.31 | 1,760,032 |
+| 3 | 1200 | 01.10.02.15 | 56,352 |
+| 4 | 1100 | 10.75.00.17 | 94,720 |
+| 5 | 0105 | 12.07.00.11 | 245,824 |
+| 6 | 0100 | 01.55.00.45 | 39,459,264 |
+
+Offline validation performed against the package manifest:
+
+- every archive member size equals the manifest `size`
+- every whole signed-module MD5 equals the manifest `md5`
+- every module begins with the expected ASCII magic `IM*H`
+- the `IM*H` header's stored total-size field equals the actual signed file size for all six modules
+- the manifest provides an explicit component order: `0905 -> 0306 -> 1200 -> 1100 -> 0105 -> 0100`
+
+The complete archive hashes are:
+
+```text
+MD5    7895303d687618766cc06efe405cf082
+SHA256 c6c88d49c6da0026a9498d07f04a3db41ef8a8d650a5bbaf22de574dc8e60b26
+```
+
+This file is now the strongest candidate seen for the previously missing WM163 `mini3_service.bin`, but **it is not yet approved for live flashing**. Before any write path is enabled, DrGrey's exact `service_fw` parser/selection logic still needs to confirm that formal version `30.00.0100`, ARB `0`, this module set, and this container layout are accepted for the target aircraft state.
+
+A separately supplied archive named `V20.00.0800_wm162_dji_system(1).bin` identifies itself as `wm162` and must not be used on the WM163 Mini 3.
