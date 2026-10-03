@@ -1398,3 +1398,58 @@ This removes the final unknown packet from the WM163 post-finalize hold phase.
 Before enabling live flashing, the remaining engineering task is to reproduce
 DrGrey's complete session sequencing/error handling around this now-proven probe
 and preserve the model/manifest/hash/ARB guards.
+
+
+## Correction: service_fw constants are compressed, not absent — 2026-10-03
+
+A direct scan of the native `service_fw.cp314-win_amd64.pyd` found its Cython
+constant/name blob as a zlib stream beginning at file offset `0xD1E0`.
+Decompressing that blob proves the previously discussed model/version/service
+strings are in fact shipped inside the binary, but not as ordinary plain-text PE
+strings.
+
+Recovered directly from the decompressed constant blob:
+
+```text
+20.00.0800
+20.07.0700
+30.00.0100
+
+mini3_service.bin
+mini3pro_service.bin
+mini4k_service.bin
+
+WA1617
+WM162
+WM163
+
+SERVICE_FW_DIR
+SERVICE_FW_LIBRARY
+ServiceFw
+ServiceFw.full_path
+parse_version
+arb_allows
+select_service_fw
+has_service_fw
+drone_public_version
+service_version
+eligible
+cands
+newest
+```
+
+Recovered user-facing ARB/selection messages include:
+
+```text
+ARB bloquea: el dron está en versión pública ...
+No hay FW de servicio en la biblioteca para ...
+OK: FW de servicio ...
+el FW de servicio más nuevo disponible es ... (más viejo).
+Necesitás el FW de servicio para el ARB actual del dron.
+```
+
+Therefore the earlier note saying those strings were not embedded in
+`service_fw.pyd` is superseded: they are embedded in the compressed Cython
+constant table. The next step is to reconstruct the actual dictionary entries and
+comparison logic from `arb_allows()` and `select_service_fw()`, rather than
+merely infer mappings from string adjacency.
