@@ -45,6 +45,7 @@ CMD_SET_ZENMUSE = 4
 
 CMD_ID_GENERAL_REBOOT = 0x0B
 CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
+CMD_ID_GENERAL_GET_CFG_FILE = 0x4F
 CMD_ID_GENERAL_GET_SN = 0x51
 CMD_ID_GENERAL_PUSH_CHECK_STATUS = 0xF1
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
@@ -462,6 +463,224 @@ def _ascii_until_nul(data: bytes) -> str:
     if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in text):
         return ""
     return text
+
+
+@dataclasses.dataclass(frozen=True)
+class AircraftFirmwareManifest:
+    device: str
+    formal: str
+    release: str
+    antirollback: str
+    antirollback_ext: str
+    enforce: str
+    enforce_time: str
+    modules: tuple[tuple[str, str, str], ...]
+
+
+def build_cfg_manifest_read_payload(offset: int, max_bytes: int = 1000) -> bytes:
+    """Build the recovered General 0x00/0x4F read-only cfg-file request.
+
+    Wire payload: op=1, uint32_le offset, uint32_le max requested bytes.
+    """
+    if not 0 <= offset <= 0xFFFFFFFF:
+        raise ValueError("cfg manifest offset is out of uint32 range")
+    if not 1 <= max_bytes <= 0xFFFFFFFF:
+        raise ValueError("cfg manifest max_bytes is out of uint32 range")
+    return struct.pack("<BII", 1, offset, max_bytes)
+
+
+def parse_cfg_manifest_reply(payload: bytes) -> tuple[int, int, bytes]:
+    """Parse a General 0x00/0x4F response.
+
+    Response payload: status:u8, chunk_len:u32 LE, remaining:u32 LE, data.
+    """
+    if len(payload) < 9:
+        raise ValueError("cfg manifest reply is shorter than 9-byte header")
+    status = payload[0]
+    chunk_len = int.from_bytes(payload[1:5], "little")
+    remaining = int.from_bytes(payload[5:9], "little")
+    data = payload[9:]
+    if chunk_len > len(data):
+        raise ValueError(
+            f"cfg manifest reply chunk length {chunk_len} exceeds available {len(data)}"
+        )
+    return status, remaining, data[:chunk_len]
+
+
+def parse_aircraft_cfg_manifest(blob: bytes) -> AircraftFirmwareManifest:
+    """Extract the clear XML from the aircraft's signed cfg.sig container."""
+    import re
+
+    start = blob.find(b"<?xml")
+    end = blob.rfind(b"</dji>")
+    if start < 0 or end < 0:
+        raise ValueError("cfg manifest read does not contain complete DJI XML")
+    xml = blob[start : end + len(b"</dji>")].decode("utf-8", errors="strict")
+
+    def attr(tag_pattern: str, name: str) -> str:
+        m = re.search(tag_pattern, xml, flags=re.S)
+        if not m:
+            return ""
+        attrs = m.group(1)
+        a = re.search(rf'\b{name}="([^"]*)"', attrs)
+        return a.group(1) if a else ""
+
+    device = attr(r"<device\s+([^>]*)>", "id")
+    formal = attr(r"<firmware\s+([^>]*)>", "formal")
+    release = attr(r"<release\s+([^>]*)>", "version")
+    antirollback = attr(r"<release\s+([^>]*)>", "antirollback")
+    antirollback_ext = attr(r"<release\s+([^>]*)>", "antirollback_ext")
+    enforce = attr(r"<release\s+([^>]*)>", "enforce")
+    enforce_time = attr(r"<release\s+([^>]*)>", "enforce_time")
+
+    modules = []
+    for m in re.finditer(r"<module\s+([^>]*)>([^<]*)</module>", xml, flags=re.S):
+        attrs, filename = m.groups()
+        mid = re.search(r'\bid="([^"]*)"', attrs)
+        ver = re.search(r'\bversion="([^"]*)"', attrs)
+        modules.append(
+            (
+                mid.group(1) if mid else "",
+                ver.group(1) if ver else "",
+                filename.strip(),
+            )
+        )
+
+    return AircraftFirmwareManifest(
+        device=device,
+        formal=formal,
+        release=release,
+        antirollback=antirollback,
+        antirollback_ext=antirollback_ext,
+        enforce=enforce,
+        enforce_time=enforce_time,
+        modules=tuple(modules),
+    )
+
+
+def run_fw_manifest_probe(
+    port: str,
+    baudrate: int,
+    timeout_seconds: float,
+    verbose: int,
+    *,
+    max_bytes: int = 65536,
+) -> int:
+    """Read the installed WM163 cfg.sig manifest over General 0x00/0x4F.
+
+    This is read-only. It does not enter factory mode and does not write
+    firmware or calibration data.
+    """
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    receiver = COMM_DEV_CAMERA
+    receiver_index = 0
+    request_max = 1000
+    offset = 0
+    out = bytearray()
+    reader = FrameReader()
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print("Mode: READ-ONLY installed firmware manifest (General 0x00/0x4F).")
+    print("Target: CAMERA.0 / device 1 index 0 (recovered WM163 responder).")
+
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        ser_obj.reset_input_buffer()
+
+        while len(out) < max_bytes:
+            seq = next_sequence()
+            payload = build_cfg_manifest_read_payload(offset, request_max)
+            packet = build_packet(
+                seq=seq,
+                payload=payload,
+                receiver=receiver,
+                receiver_index=receiver_index,
+                ack_type=ACK_AFTER_EXEC,
+                cmd_set=CMD_SET_GENERAL,
+                cmd_id=CMD_ID_GENERAL_GET_CFG_FILE,
+            )
+            if verbose:
+                print(f"TX offset={offset}: {packet.hex(' ')}")
+            ser_obj.write(packet)
+            ser_obj.flush()
+
+            deadline = time.monotonic() + timeout_seconds
+            matched = None
+            for frame in read_frames(ser_obj, reader, deadline):
+                if verbose > 1:
+                    print(f"RX: {frame.hex}")
+                if is_reply_to(
+                    frame,
+                    sender=receiver,
+                    sender_index=receiver_index,
+                    seq=seq,
+                    cmd_set=CMD_SET_GENERAL,
+                    cmd_id=CMD_ID_GENERAL_GET_CFG_FILE,
+                ):
+                    matched = frame
+                    break
+
+            if matched is None:
+                print(
+                    f"ERROR: no matching 0x00/0x4F response at offset {offset}.",
+                    file=sys.stderr,
+                )
+                return 3
+
+            try:
+                status, remaining, chunk = parse_cfg_manifest_reply(matched.payload)
+            except ValueError as exc:
+                print(f"ERROR: malformed 0x00/0x4F response: {exc}", file=sys.stderr)
+                return 4
+
+            if status != 0:
+                print(
+                    f"ERROR: 0x00/0x4F returned status 0x{status:02x} at offset {offset}.",
+                    file=sys.stderr,
+                )
+                return 5
+            if not chunk and remaining:
+                print("ERROR: manifest read made no forward progress.", file=sys.stderr)
+                return 6
+
+            out.extend(chunk)
+            offset += len(chunk)
+            if verbose:
+                print(
+                    f"RX chunk={len(chunk)} total={len(out)} remaining={remaining}"
+                )
+
+            if remaining == 0:
+                break
+            if b"</dji>" in out:
+                break
+
+    try:
+        info = parse_aircraft_cfg_manifest(bytes(out))
+    except (UnicodeDecodeError, ValueError) as exc:
+        print(f"ERROR: incomplete/unparseable aircraft cfg.sig: {exc}", file=sys.stderr)
+        return 7
+
+    print(f"device={info.device or '(unknown)'}")
+    print(f"formal={info.formal or '(missing)'}")
+    print(f"release={info.release or '(missing)'}")
+    print(
+        "antirollback="
+        f"{info.antirollback or '(missing)'} "
+        f"antirollback_ext={info.antirollback_ext or '(missing)'}"
+    )
+    print(
+        f"enforce={info.enforce or '(missing)'} "
+        f"enforce_time={info.enforce_time or '(missing)'}"
+    )
+    print(f"modules={len(info.modules)}")
+    for mid, version, filename in info.modules:
+        print(f"  {mid or '????'}  {version or '(no version)'}  {filename}")
+    print("NOTE: FORMAL is the aircraft-level version intended for the offline ARB guard.")
+    return 0
 
 
 def describe_general_serial_payload(payload: bytes) -> str:
@@ -1613,6 +1832,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     flightlog.add_argument("path", help="path to DJIFlightRecord_*.txt")
 
+    fw_manifest = sub.add_parser(
+        "probe-fw-manifest",
+        help="read-only installed aircraft cfg.sig manifest over General 0x00/0x4F",
+    )
+    fw_manifest.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    fw_manifest.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    fw_manifest.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=3.0,
+        help="per-page response timeout (default: 3 seconds)",
+    )
+
     service_probe = sub.add_parser(
         "probe-service-fw",
         help="read-only version inquiry for recovered WM163 service modules 0100/0306/1100",
@@ -1771,6 +2003,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "flightlog-info":
         return run_flightlog_info(args.path)
+
+    if args.action == "probe-fw-manifest":
+        return run_fw_manifest_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
 
     if args.action == "probe-service-fw":
         return run_service_fw_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
