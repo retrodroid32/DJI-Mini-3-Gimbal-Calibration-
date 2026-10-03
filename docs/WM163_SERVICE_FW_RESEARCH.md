@@ -2268,3 +2268,64 @@ license_client.fetch_mini3_fw(dest_path, model=model_code)
 There is no `public_version`, `drone_public_version`, ARB value, token, callback, or other hidden policy argument in this method signature.
 
 Consequently the Mini-3 firmware download call itself cannot locally choose an image by comparing the connected aircraft's public version. For our replacement flasher, model validation and the separately recovered local ARB compatibility check remain explicit pre-write requirements.
+
+
+## Worker session failure semantics: fail closed, no retry — 2026-10-03
+
+Native tracing of `_M3FlashWorker.run()` now resolves the Session-A/Session-B exception behavior in addition to the already-proven object reuse.
+
+### Session A
+
+The optimized Cython call to `session_a` occurs at `0x18000533E`. Its return value is tested immediately:
+
+```text
+call session_a(...)
+if return == NULL:
+    enter common exception-cleanup path
+```
+
+The NULL branch begins at `0x18000538E` and records the Cython traceback/state marker before jumping to the worker's common error unwinding path. There is no second `session_a` invocation, transport reconstruction, reconnect call, or fallback invocation of Session B on this branch.
+
+### Session B
+
+The optimized `session_b` call occurs at `0x1800053FD`. Its result is likewise tested immediately. A NULL return takes the error branch beginning at `0x180005461`, which enters the same common exception-unwind machinery.
+
+There is no retry of Session B in the recovered worker path.
+
+### Handoff policy
+
+The exact high-level behavior is therefore:
+
+```python
+transport = EngineTransport(...)
+flasher = Flasher(...)
+
+try:
+    flasher.session_a(loader)
+except Exception:
+    abort_worker()
+    # Session B is never attempted
+
+try:
+    flasher.session_b(ordered_files, total_size)
+except Exception:
+    abort_worker()
+    # no automatic retry/reconnect
+```
+
+Cython implements this through NULL-return exception propagation rather than the literal Python shown above, but the control-flow semantics are equivalent.
+
+This is a useful safety requirement for the replacement implementation: Session A failure must fail closed before any Session-B service-image transfer, and a Session-B transport/write/drain/control exception must abort rather than automatically replaying records against an uncertain loader state.
+
+Together with the previous object-lifetime result, the Session-A -> loader -> Session-B worker boundary is now substantially closed:
+
+```text
+same EngineTransport
+same Flasher
+Session A waits for loader transition internally
+no worker-level close/reopen
+normal Session-A return -> immediate Session-B call
+Session-A exception -> abort
+Session-B exception -> abort
+no automatic retry at either boundary
+```
