@@ -2235,3 +2235,36 @@ What is proven is that the UI module does not name or retrieve a `public_version
 This leaves two plausible implementation layers for DrGrey's own product: the remote `fetch_mini3_fw` service may make the final image-policy decision, or the UI path may rely on a server-selected image after its model-only availability check. The binary evidence here does not distinguish those possibilities yet.
 
 For our replacement flasher, the safe consequence is unambiguous: retain an explicit local WM163 model guard and local ARB/public-version compatibility guard before any write rather than assuming the UI's `has_service_fw` or download path provides that protection.
+
+
+## Exact fetch_mini3_fw signature recovered — 2026-10-03
+
+The service-image download call is now fully resolved by tracing the implementation in `production/licensing/client.cp314-win_amd64.pyd` rather than inferring its parameters from the UI caller.
+
+The Cython wrapper at `0x180009980` parses three Python argument slots total. They map, in lexical/module-state order, to:
+
+```text
+0x18002D6E0 -> self
+0x18002D2E0 -> dest_path
+0x18002D4E0 -> model
+```
+
+The wrapper requires the first two slots (`self` and `dest_path`) and supplies a default for the third. Therefore the exact Python-visible method signature is:
+
+```python
+LicenseClient.fetch_mini3_fw(self, dest_path, model=None)
+```
+
+The native body preserves the third argument as the model selector and falls back to its default object when it is false/omitted.
+
+This also explains the UI vectorcall at `0x18000DDAC`: it passes two positional objects (the `LicenseClient` receiver plus the destination path) and one keyword argument whose recovered keyword name is exactly `model`.
+
+Conceptually the UI performs:
+
+```python
+license_client.fetch_mini3_fw(dest_path, model=model_code)
+```
+
+There is no `public_version`, `drone_public_version`, ARB value, token, callback, or other hidden policy argument in this method signature.
+
+Consequently the Mini-3 firmware download call itself cannot locally choose an image by comparing the connected aircraft's public version. For our replacement flasher, model validation and the separately recovered local ARB compatibility check remain explicit pre-write requirements.
