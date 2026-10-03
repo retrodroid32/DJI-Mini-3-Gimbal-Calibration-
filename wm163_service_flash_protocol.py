@@ -235,3 +235,17 @@ def ctrl_ack_payload_accepted(payload: bytes) -> bool:
     """
     status = bytes(payload)[:1]
     return status in (b"", b"\x00")
+
+
+def session_b_finalize_gate(*, stream_exhausted: bool, final_drain_completed: bool) -> bool:
+    """Offline invariant for the recovered Session-B -> FINALIZE boundary.
+
+    DrGrey only reaches B/FINALIZE after the Session-B file iterator is
+    exhausted and the terminal drain(300) call returns normally. Exceptions
+    from a 0x2A write, a periodic drain(15), or the terminal drain(300)
+    propagate out of session_b and therefore prevent FINALIZE.
+
+    A normal drain return may contain b""; payload content is not inspected at
+    this boundary.
+    """
+    return bool(stream_exhausted and final_drain_completed)
