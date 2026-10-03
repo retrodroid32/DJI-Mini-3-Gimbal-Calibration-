@@ -166,7 +166,6 @@ def test_known_v30_session_b_record_and_finalize_sequence_invariants():
 def test_recovered_sequence_defaults_and_drain_cadence():
     from wm163_service_flash_protocol import (
         SESSION_A_SEQ0,
-        SESSION_A_LOADER_WAIT_SECONDS,
         SESSION_B_SEQ0,
         SESSION_B_TIMEOUT_SECONDS,
         SESSION_B_DRAIN_EVERY_RECORDS,
@@ -175,7 +174,6 @@ def test_recovered_sequence_defaults_and_drain_cadence():
     )
 
     assert SESSION_A_SEQ0 == 0x4900
-    assert SESSION_A_LOADER_WAIT_SECONDS == 60
     assert SESSION_B_SEQ0 == 0x3022
     assert SESSION_B_TIMEOUT_SECONDS == 180
     assert SESSION_B_DRAIN_EVERY_RECORDS == 64
@@ -201,3 +199,39 @@ def test_recovered_sequence_helpers_match_known_transfers():
         ("1200", b"x" * 56352),
     ]
     assert session_b_finalize_seq(files) == 0xFF83
+
+
+def test_recovered_session_b_loader_probe():
+    from wm163_service_flash_protocol import (
+        COMMIT_PROBE_DST_RAW,
+        CMDSET_GENERAL,
+        CMD_COMMIT_PROBE,
+        FLAG_REQ_ACK,
+        SESSION_B_LOADER_WAIT_SECONDS,
+        SESSION_B_LOADER_PROBE_SEQ0,
+        SESSION_B_LOADER_PROBE_XFER_TIMEOUT_MS,
+        SESSION_B_LOADER_PROBE_DRAIN_MS,
+        SESSION_B_LOADER_PROBE_SLEEP_SECONDS,
+        SESSION_B_LOADER_IDENTITY_MARKER,
+        session_b_loader_probe_command,
+        loader_probe_identity_seen,
+    )
+
+    assert SESSION_B_LOADER_WAIT_SECONDS == 180
+    assert SESSION_B_LOADER_PROBE_SEQ0 == 0
+    assert SESSION_B_LOADER_PROBE_XFER_TIMEOUT_MS == 4000
+    assert SESSION_B_LOADER_PROBE_DRAIN_MS == 200
+    assert SESSION_B_LOADER_PROBE_SLEEP_SECONDS == 2
+    assert SESSION_B_LOADER_IDENTITY_MARKER == b"UAV"
+
+    cmd = session_b_loader_probe_command(0)
+    assert cmd.dst_raw == COMMIT_PROBE_DST_RAW == 0x28
+    assert cmd.cmd_set == CMDSET_GENERAL == 0x00
+    assert cmd.cmd_id == CMD_COMMIT_PROBE == 0x01
+    assert cmd.payload == b""
+    assert cmd.seq == 0
+    assert cmd.flags == FLAG_REQ_ACK == 0x40
+
+    assert loader_probe_identity_seen(b"prefix WM163 ", b"UAV suffix")
+    assert loader_probe_identity_seen(b"UAV", b"")
+    assert not loader_probe_identity_seen(b"WM163", b"")
