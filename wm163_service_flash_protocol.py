@@ -146,3 +146,26 @@ def session_b_total_size(files):
     Protocol/name overhead and tar metadata are not counted.
     """
     return sum(len(blob) for _name, blob in files)
+
+
+def chunk_count(size: int, chunk_size: int = CHUNK) -> int:
+    """Offline record-count helper for a byte stream split into fixed chunks."""
+    if size < 0:
+        raise ValueError("size must be non-negative")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    return (size + chunk_size - 1) // chunk_size
+
+
+def session_b_record_count(files) -> int:
+    """Count START/DATA/END records for an already-selected Session-B file set."""
+    return sum(2 + chunk_count(len(blob)) for _name, blob in files)
+
+
+def seq_after(start_seq: int, operations: int) -> int:
+    """Offline 16-bit sequence arithmetic used for recovered transfer invariants."""
+    if not 0 <= start_seq <= 0xFFFF:
+        raise ValueError("start_seq must fit uint16")
+    if operations < 0:
+        raise ValueError("operations must be non-negative")
+    return (start_seq + operations) & 0xFFFF
