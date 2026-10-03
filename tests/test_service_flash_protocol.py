@@ -250,3 +250,15 @@ def test_loader_probe_first_packet_matches_commit_probe_fields():
     )
 
     assert session_b_loader_probe_command(0) == commit_hold_probe_command()
+
+
+def test_recovered_ctrl_and_stream_ack_deadlines():
+    from wm163_service_flash_protocol import (
+        CTRL_ACK_DEADLINE_SECONDS,
+        STREAM_ACK_DEADLINE_SECONDS,
+        ACK_COLLECT_DRAIN_MS,
+    )
+
+    assert CTRL_ACK_DEADLINE_SECONDS == 15
+    assert STREAM_ACK_DEADLINE_SECONDS == 20
+    assert ACK_COLLECT_DRAIN_MS == 400
