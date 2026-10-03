@@ -2331,53 +2331,146 @@ no automatic retry at either boundary
 ```
 
 
-## Session-A temporary-loader wait is bounded to 60 seconds — 2026-10-03
 
-Static tracing of the late `Flasher.session_a()` body resolves the maximum loader-handoff wait.
 
-After the Session-A loader has been transferred, verified, and started by `A/CMD_0B`, the routine enters the wait described by its recovered log strings:
+## Correction: temporary-loader wait belongs to Session B and defaults to 180 seconds — 2026-10-03
 
-```text
-waiting for the loader to boot (poll version→0x28, up to %ds)…
-loader up ('WM163 UAV') after %.0fs
-```
+Further native tracing corrects the earlier 60-second/Session-A attribution.
 
-The Cython integer cache reference at native address `0x18000FC44` is module integer index 16:
+The exact loader-wait strings cross-reference the beginning of the native `Flasher.session_b()` body, not `session_a()`:
 
 ```text
-index 16 = 0x3C = 60
+0x18000E29C -> "//  waiting for the loader to boot (poll version→0x28, up to %ds)…"
+0x18000ED27 -> "the loader did not report 'WM163 UAV' within %ds (poll 0x01→0x28)..."
+0x18000F0E7 -> "//  loader up ('WM163 UAV') after %.0fs"
 ```
 
-That object is used in the elapsed-time comparison controlling the wait loop. The comparison opcode is the Cython/CPython rich-compare form for `>` against the recovered 60-second object.
-
-Therefore the handoff timeout is:
+`session_a()` ends after the recovered A/CMD_0B transaction and logs:
 
 ```text
-SESSION_A_LOADER_WAIT_SECONDS = 60
+// Session A OK (loader delivered, %d frames)
 ```
 
-If the loader identity is not observed before the bound, DrGrey's recovered error text is:
+The higher-level worker then invokes `session_b(...)` on the same `Flasher` object. Session B first waits for the temporary loader, and only after the loader is recognized does it continue to B/ENTER and the service-image transfer.
+
+### Exact loader-wait timeout
+
+The wait-loop comparison uses the `timeout_s` argument passed to `session_b`. The already-recovered wrapper signature is:
+
+```python
+session_b(self, files, total_size, seq0=0x3022, timeout_s=180)
+```
+
+Therefore the default loader-wait bound is:
 
 ```text
-the loader did not report 'WM163 UAV' within %ds (poll 0x01→0x28). Did Session A leave the loader running?
+180 seconds
 ```
 
-So this is a hard Session-A failure: the method raises/fails, the higher-level worker follows its already-recovered fail-closed exception path, and Session B is not started.
+The previously identified module integer `60` is not the Session-B loader-wait bound.
 
-The resulting handoff model is now:
+### Exact probe construction
+
+At the start of the wait loop, DrGrey initializes a separate loader-probe sequence to zero and calls the recovered `encode` helper with positional tuple `(1, b"")` plus:
+
+```python
+encode(
+    0x01,
+    b"",
+    dst=0x28,
+    seq=probe_seq,
+    flags=FLAG_REQ_ACK,
+)
+```
+
+with module `CMDSET = 0x00`.
+
+Thus the first loader probe is:
 
 ```text
-A/CMD_0B
-  ↓
-retain same EngineTransport / Flasher
-  ↓
-poll for temporary loader identity
-  ↓
-require 'WM163 UAV'
-  ↓
-maximum wait 60 s
-  ├─ identity observed -> session_a returns normally -> worker calls session_b
-  └─ timeout/error     -> session_a fails -> worker aborts; no Session B
+CmdSet:  0x00
+CmdId:   0x01
+Dst:     0x28
+Seq:     0
+Flags:   0x40 (request ACK)
+Payload: empty
 ```
 
-The recovered error string identifies the loader-version probe as `0x01→0x28`; exact packet-field reconstruction for that Session-A wait probe is being kept separate from the already-proven post-finalize `0x01→0x28` hold probe until all of its sequence/timeout fields are mapped.
+The first request is therefore wire-identical to the already-recovered post-finalize commit probe. Their surrounding state machines are different.
+
+### Per-poll transport behavior
+
+The loader-wait call to `EngineTransport.xfer` supplies no explicit `timeout_ms` keyword, so it uses the recovered method default:
+
+```text
+xfer timeout = 4000 ms
+```
+
+Immediately afterward Session B calls:
+
+```python
+transport.drain(200)
+```
+
+and concatenates the bytes returned by `xfer` and `drain` before examining the result.
+
+The probe sequence is then advanced with the same recovered 16-bit rule:
+
+```python
+probe_seq = (probe_seq + 1) & 0xFFFF
+```
+
+This loader-probe counter is separate from the later Session-B transfer counter, which still starts fresh at `seq0 = 0x3022` for B/ENTER.
+
+### Loader identity recognition
+
+The native code does not require a parsed frame object whose model string equals the full literal `"WM163 UAV"`. It performs a containment test for the recovered bytes/string constant:
+
+```text
+UAV
+```
+
+against the combined raw receive bytes. Conceptually:
+
+```python
+rx = transport.xfer(probe) + transport.drain(200)
+probe_seq = (probe_seq + 1) & 0xffff
+
+if b"UAV" in rx:
+    loader_ready = True
+```
+
+The log text calls the expected loader `WM163 UAV`, but the native acceptance predicate recovered at this site is the substring marker `UAV`.
+
+### Retry cadence
+
+If the marker is absent and the elapsed time has not exceeded `timeout_s`, the native code resolves `time.sleep` and passes cached integer `2`:
+
+```python
+time.sleep(2)
+```
+
+The loop then sends another probe using the incremented probe sequence.
+
+So the recovered pre-B/ENTER state machine is:
+
+```text
+probe_seq = 0
+start = time.time()
+
+repeat:
+    send 00/01 -> dst 0x28, seq=probe_seq, ACK requested, empty payload
+    rx = xfer(..., default 4000 ms) + drain(200)
+    probe_seq = (probe_seq + 1) & 0xffff
+
+    if b"UAV" in rx:
+        loader ready
+        continue to B/ENTER using independent seq0=0x3022
+
+    if elapsed > timeout_s:       # default 180 s
+        raise FlashError
+
+    sleep(2 s)
+```
+
+This supersedes all earlier notes describing a 60-second Session-A loader wait.
