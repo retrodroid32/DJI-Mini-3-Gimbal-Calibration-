@@ -917,8 +917,8 @@ def run_40011_probe(port: str, baudrate: int, timeout_seconds: float, verbose: i
     print(f"Model: {MODEL} ({PLATFORM})")
     print(f"Port: {port} @ {baudrate}")
     print("Mode: READ-ONLY 40011 discovery probe.")
-    print("Queries: CAMERA 0x02/0xB5 and GIMBAL 0x04/0x51 only.")
-    print("No calibration, association, IMU write, save, or reboot command is sent.")
+    print("Queries: CAMERA 0x02/0xB5, GIMBAL 0x00/0x51 identity slots, and GIMBAL 0x04/0x51.")
+    print("No calibration, association, serial-number write, IMU write, save, or reboot command is sent.")
 
     responses = 0
     try:
@@ -942,6 +942,36 @@ def run_40011_probe(port: str, baudrate: int, timeout_seconds: float, verbose: i
                     f"payload={camera.payload.hex(' ')}"
                 )
                 print(f"camera 02/B5 decoded: {describe_camera_sensor_id_payload(camera.payload)}")
+
+            # Read the gimbal's common serial-number slots as a completely
+            # read-only cross-check for the remaining 40011 association error.
+            # General 0x00/0x51 is DJI's Get Serial Number command; selectors
+            # 0x01..0x04 are the same BoardNum/ChipId/ModuleNum/DeviceNum family
+            # already used by the FC identity probe.
+            for selector, source_name in (
+                (0x01, "BoardNum"),
+                (0x02, "ChipId"),
+                (0x03, "ModuleNum"),
+                (0x04, "DeviceNum"),
+            ):
+                frame = send_read_query(
+                    ser_obj,
+                    receiver=COMM_DEV_GIMBAL,
+                    cmd_set=CMD_SET_GENERAL,
+                    cmd_id=CMD_ID_GENERAL_GET_SN,
+                    payload=bytes([selector]),
+                    timeout_seconds=timeout_seconds,
+                    verbose=verbose,
+                    label=f"gimbal 00/51 selector {selector}",
+                )
+                if frame is None:
+                    print(f"gimbal 00/51 selector {selector}: no matching response ({source_name})")
+                else:
+                    responses += 1
+                    print(
+                        f"gimbal 00/51 selector {selector}: "
+                        f"{describe_common_device_id_payload(frame.payload)} [{source_name}]"
+                    )
 
             imu = send_read_query(
                 ser_obj,
