@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -44,6 +44,7 @@ CMD_SET_ZENMUSE = 4
 
 CMD_ID_GENERAL_ACTIVE_STATUS = 0x32
 CMD_ID_GENERAL_GET_SN = 0x51
+CMD_ID_GENERAL_PUSH_CHECK_STATUS = 0xF1
 CMD_ID_FC_GET_DEVICE_INFO = 0x74
 CMD_ID_GIMBAL_CALIB = 0x08
 CMD_ID_GIMBAL_GET_SERIAL_PARAMS = 0x1F
@@ -468,6 +469,51 @@ def describe_general_serial_payload(payload: bytes) -> str:
     return f"raw={payload.hex(' ')}"
 
 
+GIMBAL_CHECK_DIAGNOSTICS = (
+    (0, 40013, "GYROSCOPE_DATA_ERROR"),
+    (1, 40014, "PITCH_ESC_DATA_ERROR"),
+    (2, 40015, "ROLL_ESC_DATA_ERROR"),
+    (3, 40016, "YAW_ESC_DATA_ERROR"),
+    (4, 40012, "CONNECT_TO_FC_ERROR"),
+    (7, 40021, "IMU_DATA_DISMATCH"),
+    (10, 40004, "VIBRATION_ABNORMAL"),
+    (11, 40007, "ROTATION_ERROR"),
+    (13, 40008, "REACHED_ROLL_MECHANICAL_LIMIT"),
+    (14, 40009, "REACHED_PITCH_MECHANICAL_LIMIT"),
+    (16, 40010, "SECTORS_JUDGE_ERROR"),
+    (24, 40011, "CALIBRATE_ERROR"),
+)
+
+
+def decode_gimbal_check_status(payload: bytes) -> tuple[int, list[tuple[int, str]]]:
+    """Decode General/0xF1 DataGimbalGetPushCheckStatus.
+
+    DJI's BytesUtil and DataBase parser treat the four status bytes as a
+    little-endian 32-bit value. Modern decompiled DJI-family code maps bit 24 to
+    whole-gimbal calibration error and bit 7 to IMU calibration mismatch.
+    """
+    if len(payload) < 4:
+        raise ValueError("gimbal check-status payload is shorter than 4 bytes")
+    value = int.from_bytes(payload[:4], "little")
+    active = [
+        (code, name)
+        for bit, code, name in GIMBAL_CHECK_DIAGNOSTICS
+        if value & (1 << bit)
+    ]
+    return value, active
+
+
+def describe_gimbal_check_status_payload(payload: bytes) -> str:
+    try:
+        value, active = decode_gimbal_check_status(payload)
+    except ValueError:
+        return f"raw={payload.hex(' ')}"
+    if not active:
+        return f"flags=0x{value:08x}, diagnostics=none"
+    diag = ", ".join(f"{code} {name}" for code, name in active)
+    return f"flags=0x{value:08x}, diagnostics={diag}"
+
+
 def describe_auto_cal_status_payload(payload: bytes) -> str:
     """Decode DataGimbalGetPushAutoCalibrationStatus.
 
@@ -829,6 +875,48 @@ def run_identity_probe(port: str, baudrate: int, timeout_seconds: float, verbose
     return 0 if responses else 4
 
 
+def run_gimbal_diagnostics(port: str, baudrate: int, seconds: float, verbose: int) -> int:
+    """Passively read the gimbal General/0xF1 check-status push. Sends nothing."""
+    if serial is None:
+        print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
+        return 2
+
+    print(f"Model: {MODEL} ({PLATFORM})")
+    print(f"Port: {port} @ {baudrate}")
+    print(f"Mode: PASSIVE gimbal diagnostics for {seconds:.1f} seconds; no DUML request is transmitted.")
+
+    reader = FrameReader()
+    deadline = time.monotonic() + seconds
+    seen: dict[bytes, int] = {}
+
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        ser_obj.reset_input_buffer()
+        for frame in read_frames(ser_obj, reader, deadline):
+            if (
+                frame.sender == COMM_DEV_GIMBAL
+                and frame.cmd_set == CMD_SET_GENERAL
+                and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
+            ):
+                seen[frame.payload] = seen.get(frame.payload, 0) + 1
+                if verbose:
+                    print(
+                        f"gimbal check-status: payload={frame.payload.hex(' ')}  "
+                        f"{describe_gimbal_check_status_payload(frame.payload)}"
+                    )
+
+    if not seen:
+        print("No gimbal General/0xF1 check-status push was observed.")
+        return 3
+
+    print("Observed gimbal check-status state(s):")
+    for payload, count in sorted(seen.items(), key=lambda item: -item[1]):
+        print(
+            f"  {count:3d}x  payload={payload.hex(' ')}  "
+            f"{describe_gimbal_check_status_payload(payload)}"
+        )
+    return 0
+
+
 def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int) -> int:
     """Start DJI's normal gimbal auto-calibration and capture gimbal traffic.
 
@@ -910,6 +998,12 @@ def run_auto_cal_capture(port: str, baudrate: int, seconds: float, verbose: int)
                     and frame.cmd_id == CMD_ID_GIMBAL_AUTO_CAL_STATUS
                 ):
                     decoded = "  " + describe_auto_cal_status_payload(frame.payload)
+                elif (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_GENERAL
+                    and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
+                ):
+                    decoded = "  " + describe_gimbal_check_status_payload(frame.payload)
                 print(
                     f"[{elapsed:6.2f}s] sender={frame.sender} receiver={frame.receiver} "
                     f"set=0x{frame.cmd_set:02x} id=0x{frame.cmd_id:02x} "
@@ -972,10 +1066,17 @@ def run_passive_gimbal_capture(port: str, baudrate: int, seconds: float, verbose
             counts[key] = counts.get(key, 0) + 1
             if verbose:
                 elapsed = time.monotonic() - started
+                decoded = ""
+                if (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_GENERAL
+                    and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
+                ):
+                    decoded = "  " + describe_gimbal_check_status_payload(frame.payload)
                 print(
                     f"[{elapsed:6.2f}s] sender={frame.sender} receiver={frame.receiver} "
                     f"set=0x{frame.cmd_set:02x} id=0x{frame.cmd_id:02x} "
-                    f"payload={frame.payload.hex(' ')}"
+                    f"payload={frame.payload.hex(' ')}{decoded}"
                 )
             if verbose > 1:
                 print(f"  RAW: {frame.hex}")
@@ -1128,6 +1229,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="per-query response timeout (default: 2.5 seconds)",
     )
 
+    diag = sub.add_parser(
+        "diagnose-gimbal",
+        help="passively decode DJI gimbal check-status diagnostics (General 0x00/0xF1)",
+    )
+    diag.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    diag.add_argument("--baudrate", type=int, default=9600, help="serial baud rate (default: 9600)")
+    diag.add_argument(
+        "--seconds",
+        type=float,
+        default=5.0,
+        help="passive diagnostic capture duration (default: 5)",
+    )
+
     auto_capture = sub.add_parser(
         "auto-cal-capture",
         help="start normal DJI gimbal auto-calibration over COM and capture resulting gimbal traffic",
@@ -1186,6 +1300,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.action == "identify":
         return run_identity_probe(args.port, args.baudrate, args.timeout_seconds, args.verbose)
+
+    if args.action == "diagnose-gimbal":
+        return run_gimbal_diagnostics(args.port, args.baudrate, args.seconds, args.verbose)
 
     if args.action == "capture-gimbal":
         return run_passive_gimbal_capture(args.port, args.baudrate, args.seconds, args.verbose)
