@@ -200,3 +200,21 @@ def test_parses_v14_flightlog_identity_without_api_key(tmp_path):
 
 def test_decodes_fd_as_flash_flushing():
     assert describe_ccode_payload(b"\xfd") == "ccode=0xfd (FLASH_FLUSHING)"
+
+
+def test_builds_normal_auto_calibration_packet_with_empty_payload():
+    pkt = build_packet(
+        seq=0x1234,
+        payload=b"",
+        receiver=4,
+        cmd_set=4,
+        cmd_id=8,
+    )
+    frame = parse_frame(pkt)
+    assert frame.sender == 10
+    assert frame.receiver == 4
+    assert frame.seq == 0x1234
+    assert frame.packet_type == 0
+    assert frame.cmd_set == 4
+    assert frame.cmd_id == 8
+    assert frame.payload == b""
