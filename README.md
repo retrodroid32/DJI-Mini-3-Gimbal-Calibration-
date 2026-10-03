@@ -304,3 +304,45 @@ python mini3_gimbal_cal.py -v diagnose-gimbal --port COM23 --seconds 5
 
 It sends no DUML command and only decodes the gimbal's recurring `0x00/0xF1`
 status push.
+
+
+### v0.12.0 recovered WM163 short 40021 repair
+
+Static recovery from DrGrey 1.5.2 identifies a bank-confirmed Mini 3 / WM163
+repair for active gimbal diagnostic **40021 IMU_DATA_DISMATCH**:
+
+1. require the live gimbal `0x00/0xF1` status to show bit 7 / 40021;
+2. send GIMBAL `0x04/0x36` with payload `42 e9 7f 3f`;
+3. require a sequence-matched response with an **empty payload**;
+4. send GENERAL `0x00/0x0B` with an empty payload to BATTERY/PMU to reboot;
+5. reconnect after boot and reread diagnostics.
+
+The user's DrGrey USBPcap capture showed its outgoing DUML requests consistently
+using ACK_AFTER_EXEC, including its basic gimbal calibration and device-info
+queries. v0.12.0 uses the same ACK mode for this recovered flow.
+
+The live command is deliberately gated: it refuses to write unless 40021 is
+currently observed, refuses to reboot if the `0x04/0x36` response is missing or
+non-empty, and does not use the unrelated 168-byte 0x36 matrix or the beta
+`0x51 -> 0x36 -> 0x68` path.
+
+Inspect the two packets without touching hardware:
+
+```text
+python mini3_gimbal_cal.py dry-run-40021
+```
+
+Run the repair only on DJI Mini 3 / WM163 with active 40021:
+
+```text
+python mini3_gimbal_cal.py -v fix-imu-40021-short --port COM23 --yes
+```
+
+After the aircraft reboots and COM returns:
+
+```text
+python mini3_gimbal_cal.py -v diagnose-gimbal --port COM23 --seconds 5
+```
+
+This flow is specifically evidence-backed for **40021**. It does not claim to
+clear the separate **40011 CALIBRATE_ERROR** service/factory-calibration fault.
