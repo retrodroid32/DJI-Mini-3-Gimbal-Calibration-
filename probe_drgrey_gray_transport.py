@@ -185,6 +185,27 @@ def run_case(obj, fake: FakeSerial, *, reset_after: str | None, wait_response: b
         print("  ", item)
 
 
+def run_repeat_case(obj, fake: FakeSerial, *, reset_after: str, count: int) -> None:
+    fake.log.clear()
+    os.environ["DRGREY_GRAY_RESET_AFTER"] = reset_after
+    packet = bytes.fromhex("55 0d 04 33 2a 28 00 00 40 00 01 00 00")
+
+    print()
+    print(f"REPEAT CASE reset_after={reset_after!r} count={count}")
+    for _ in range(count):
+        obj.send_like_gray_flasher(packet, wait_response=False, window_ms=0)
+
+    resets = [i for i, item in enumerate(fake.log) if item and item[0] == "reset_input_buffer"]
+    writes = [i for i, item in enumerate(fake.log) if item and item[0] == "write"]
+    print(f"resets={len(resets)} writes={len(writes)}")
+    print("first 12 calls:")
+    for item in fake.log[:12]:
+        print("  ", item)
+    print("last 12 calls:")
+    for item in fake.log[-12:]:
+        print("  ", item)
+
+
 def main() -> int:
     if sys.version_info[:2] != (3, 14):
         print(
@@ -203,7 +224,7 @@ def main() -> int:
         print(f"ERROR: source not found: {source}", file=sys.stderr)
         return 2
 
-    with tempfile.TemporaryDirectory(prefix="drgrey_transport_probe_") as td:
+    with tempfile.TemporaryDirectory(prefix="drgrey_transport_probe_", ignore_cleanup_errors=True) as td:
         root = extract_if_needed(source, pathlib.Path(td))
         sys.path.insert(0, str(root))
 
@@ -236,6 +257,7 @@ def main() -> int:
             run_case(obj, fake, reset_after="1", wait_response=False, window_ms=0)
             run_case(obj, fake, reset_after="1", wait_response=True, window_ms=1)
             run_case(obj, fake, reset_after="64", wait_response=False, window_ms=0)
+            run_repeat_case(obj, fake, reset_after="64", count=66)
         finally:
             setattr(tr, "Serial", original_serial_symbol)
 
