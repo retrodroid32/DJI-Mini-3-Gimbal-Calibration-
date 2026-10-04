@@ -176,17 +176,26 @@ class SerialTransport:
         self.reader = FrameReader()
 
     def write(self, packet: bytes) -> None:
+        # Recovered DrGrey send_like_gray_flasher() default behavior:
+        # reset RX immediately before every gray-flasher write, then write;
+        # no flush call and no post-write sleep.
+        self.ser.reset_input_buffer()
         self.ser.write(packet)
-        self.ser.flush()
 
     def read_raw_window(self, budget_ms: int) -> bytes:
+        # Match DrGrey's gray-flasher collection behavior as closely as
+        # possible: consume exactly the currently-available byte count when
+        # data is present; otherwise poll until the collection window expires.
         deadline = time.monotonic() + budget_ms / 1000.0
         out = bytearray()
         while time.monotonic() < deadline:
-            waiting = getattr(self.ser, "in_waiting", 0)
-            data = self.ser.read(waiting or 1)
-            if data:
-                out.extend(data)
+            waiting = int(getattr(self.ser, "in_waiting", 0) or 0)
+            if waiting > 0:
+                data = self.ser.read(waiting)
+                if data:
+                    out.extend(data)
+                    continue
+            time.sleep(0.001)
         return bytes(out)
 
     def _find_ack(self, raw: bytes, *, want_seq: int, want_cmd: int):
