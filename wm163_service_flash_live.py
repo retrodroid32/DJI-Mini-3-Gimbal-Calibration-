@@ -183,20 +183,17 @@ class SerialTransport:
         self.ser.write(packet)
 
     def read_raw_window(self, budget_ms: int) -> bytes:
-        # Match DrGrey's gray-flasher collection behavior as closely as
-        # possible: consume exactly the currently-available byte count when
-        # data is present; otherwise poll until the collection window expires.
+        # Recovered DrGrey gray-flasher behavior:
+        # wait only until a response burst appears, read exactly the currently
+        # available bytes, and return immediately instead of waiting out the
+        # rest of the collection window.
         deadline = time.monotonic() + budget_ms / 1000.0
-        out = bytearray()
         while time.monotonic() < deadline:
             waiting = int(getattr(self.ser, "in_waiting", 0) or 0)
             if waiting > 0:
-                data = self.ser.read(waiting)
-                if data:
-                    out.extend(data)
-                    continue
+                return bytes(self.ser.read(waiting))
             time.sleep(0.001)
-        return bytes(out)
+        return b""
 
     def _find_ack(self, raw: bytes, *, want_seq: int, want_cmd: int):
         for frame in self.reader.feed(raw):
@@ -443,6 +440,15 @@ def main() -> int:
         print("DRY RUN ONLY: no serial port opened and no firmware was written.")
         print("Re-run with --yes only after the aircraft read-only preflight has passed.")
         return 0
+
+    if KNOWN_LIVE_SESSION_A_VERIFY_FAILURE_F5:
+        print(
+            "BLOCKED: live Session-A remains disabled after the observed A/VERIFY F5. "
+            "The transport now mirrors DrGrey reset-before-write and immediate-return "
+            "behavior, but a second live attempt is not enabled until offline checks pass.",
+            file=sys.stderr,
+        )
+        return 6
 
     if serial is None:
         print("ERROR: pyserial is required", file=sys.stderr)
