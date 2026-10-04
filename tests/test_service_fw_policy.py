@@ -115,3 +115,34 @@ def test_manifest_derived_arb_guard_fails_closed_without_formal():
     )
     assert fw2 is None
     assert "Module app/loader versions are not valid substitutes" in note2
+
+
+def test_live_wm163_v30_preflight_matches_aircraft_state():
+    from wm163_service_fw_policy import evaluate_wm163_v30_preflight
+
+    ok, reasons = evaluate_wm163_v30_preflight(
+        aircraft_device="wm163",
+        aircraft_formal="01.00.0500",
+        aircraft_antirollback="0",
+        diagnostic_40011_active=True,
+        diagnostic_40021_active=False,
+    )
+    assert ok
+    assert "40021 is clear" in reasons
+    assert "40011 is active" in reasons
+
+
+def test_live_wm163_v30_preflight_fails_closed():
+    from wm163_service_fw_policy import evaluate_wm163_v30_preflight
+
+    ok, reasons = evaluate_wm163_v30_preflight(
+        aircraft_device="wm162",
+        aircraft_formal="31.00.0000",
+        aircraft_antirollback="1",
+        diagnostic_40011_active=False,
+        diagnostic_40021_active=True,
+    )
+    assert not ok
+    assert any("wrong aircraft device" in r for r in reasons)
+    assert any("ARB blocks" in r for r in reasons)
+    assert any("40021 is active again" in r for r in reasons)
