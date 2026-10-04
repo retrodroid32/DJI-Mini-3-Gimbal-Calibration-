@@ -143,3 +143,52 @@ def select_service_fw_from_aircraft_manifest(
         )
 
     return select_service_fw(model_code, formal, library)
+
+
+def evaluate_wm163_v30_preflight(
+    *,
+    aircraft_device: object,
+    aircraft_formal: object,
+    aircraft_antirollback: object,
+    diagnostic_40011_active: bool,
+    diagnostic_40021_active: bool,
+) -> tuple[bool, tuple[str, ...]]:
+    """Offline go/no-go evaluator for the known WM163 V30.00.0100 repair path.
+
+    This contains no transport or flashing code.  It evaluates only the live
+    read-only state already obtained from the aircraft.
+    """
+    reasons: list[str] = []
+
+    device = ("" if aircraft_device is None else str(aircraft_device)).strip().lower()
+    if device != "wm163":
+        reasons.append(f"wrong aircraft device: expected wm163, got {aircraft_device!r}")
+
+    if not aircraft_formal:
+        reasons.append("missing aircraft cfg.sig FORMAL version")
+    elif not arb_allows("30.00.0100", aircraft_formal):
+        reasons.append(
+            f"ARB blocks V30.00.0100 against aircraft FORMAL {aircraft_formal}"
+        )
+
+    if str(aircraft_antirollback).strip() != "0":
+        reasons.append(
+            f"unexpected aircraft antirollback={aircraft_antirollback!r}; expected '0'"
+        )
+
+    if diagnostic_40021_active:
+        reasons.append("40021 is active again; do not enter the 40011 service-calibration path")
+
+    if not diagnostic_40011_active:
+        reasons.append("40011 is not currently active; no 40011 service repair is indicated")
+
+    if reasons:
+        return False, tuple(reasons)
+
+    return True, (
+        "WM163 identity confirmed",
+        f"aircraft FORMAL {aircraft_formal} is compatible with service 30.00.0100",
+        "aircraft antirollback is 0",
+        "40021 is clear",
+        "40011 is active",
+    )
