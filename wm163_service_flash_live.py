@@ -419,6 +419,14 @@ def main() -> int:
         action="store_true",
         help="perform the live Session-A/Session-B firmware transfer",
     )
+    ap.add_argument(
+        "--ack-f5-retry-risk",
+        action="store_true",
+        help=(
+            "acknowledge that a prior live Session-A attempt reached A/VERIFY "
+            "and was rejected with status F5; required for a second live attempt"
+        ),
+    )
     args = ap.parse_args()
 
     package_path = pathlib.Path(args.package)
@@ -442,11 +450,12 @@ def main() -> int:
         print("Re-run with --yes only after the aircraft read-only preflight has passed.")
         return 0
 
-    if KNOWN_LIVE_SESSION_A_VERIFY_FAILURE_F5:
+    if KNOWN_LIVE_SESSION_A_VERIFY_FAILURE_F5 and not args.ack_f5_retry_risk:
         print(
-            "BLOCKED: live Session-A remains disabled after the observed A/VERIFY F5. "
-            "The transport now mirrors DrGrey reset-before-write and immediate-return "
-            "behavior, but a second live attempt is not enabled until offline checks pass.",
+            "BLOCKED: a prior live Session-A attempt reached A/VERIFY and was rejected "
+            "with status F5. Offline testing now shows the recreated gray-flasher "
+            "transport is equivalent to DrGrey for reset/write/immediate-response "
+            "behavior. A second attempt requires --ack-f5-retry-risk in addition to --yes.",
             file=sys.stderr,
         )
         return 6
