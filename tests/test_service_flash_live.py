@@ -61,3 +61,27 @@ def test_serial_transport_write_resets_before_write():
         ("reset_input_buffer",),
         ("write", b"abc"),
     ]
+
+
+class _ImmediateBurstSer:
+    def __init__(self):
+        self._data = bytearray(b"\xaa\xbb\xcc\xdd")
+        self.calls = []
+    @property
+    def in_waiting(self):
+        return len(self._data)
+    def read(self, n):
+        self.calls.append(("read", n))
+        out = bytes(self._data[:n])
+        del self._data[:n]
+        return out
+
+
+def test_read_raw_window_returns_on_first_available_burst():
+    from wm163_service_flash_live import SerialTransport
+
+    fake = _ImmediateBurstSer()
+    tp = SerialTransport(fake)
+    got = tp.read_raw_window(400)
+    assert got == b"\xaa\xbb\xcc\xdd"
+    assert fake.calls == [("read", 4)]
