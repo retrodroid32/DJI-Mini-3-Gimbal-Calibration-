@@ -35,3 +35,29 @@ def test_raw_node_bytes_are_not_rewritten():
     )
     assert pkt[4] == 0x2A
     assert pkt[5] == 0x28
+
+
+class _FakeSer:
+    def __init__(self):
+        self.calls = []
+        self.in_waiting = 0
+    def reset_input_buffer(self):
+        self.calls.append(("reset_input_buffer",))
+    def write(self, data):
+        self.calls.append(("write", bytes(data)))
+        return len(data)
+    def read(self, n):
+        self.calls.append(("read", n))
+        return b""
+
+
+def test_serial_transport_write_resets_before_write():
+    from wm163_service_flash_live import SerialTransport
+
+    fake = _FakeSer()
+    tp = SerialTransport(fake)
+    tp.write(b"abc")
+    assert fake.calls == [
+        ("reset_input_buffer",),
+        ("write", b"abc"),
+    ]
