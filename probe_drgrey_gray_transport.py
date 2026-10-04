@@ -33,6 +33,7 @@ class FakeSerial:
         self.in_waiting = 0
         self.log: list[tuple] = []
         self._rx = bytearray()
+        self.response_on_write = b""
 
     def open(self):
         self.log.append(("open",))
@@ -45,6 +46,9 @@ class FakeSerial:
     def write(self, data):
         b = bytes(data)
         self.log.append(("write", len(b), b.hex(" ")))
+        if self.response_on_write:
+            self._rx.extend(self.response_on_write)
+            self.in_waiting = len(self._rx)
         return len(b)
 
     def flush(self):
@@ -185,6 +189,26 @@ def run_case(obj, fake: FakeSerial, *, reset_after: str | None, wait_response: b
         print("  ", item)
 
 
+def run_response_case(obj, fake: FakeSerial) -> None:
+    fake.log.clear()
+    os.environ.pop("DRGREY_GRAY_RESET_AFTER", None)
+    fake.response_on_write = bytes.fromhex("aa bb cc dd")
+    packet = bytes.fromhex("55 0d 04 33 2a 28 00 00 40 00 01 00 00")
+    print()
+    print("RESPONSE CASE default reset-before-write, 4 response bytes injected on write")
+    t0 = time.monotonic()
+    try:
+        result = obj.send_like_gray_flasher(packet, wait_response=True, window_ms=5)
+        print(f"return={result!r}")
+    except Exception as exc:
+        print(f"exception={type(exc).__name__}: {exc}")
+    print(f"elapsed_ms={(time.monotonic()-t0)*1000.0:.3f}")
+    print("fake-serial calls:")
+    for item in fake.log:
+        print("  ", item)
+    fake.response_on_write = b""
+
+
 def run_repeat_case(obj, fake: FakeSerial, *, reset_after: str, count: int) -> None:
     fake.log.clear()
     os.environ["DRGREY_GRAY_RESET_AFTER"] = reset_after
@@ -258,6 +282,7 @@ def main() -> int:
             run_case(obj, fake, reset_after="1", wait_response=True, window_ms=1)
             run_case(obj, fake, reset_after="64", wait_response=False, window_ms=0)
             run_repeat_case(obj, fake, reset_after="64", count=66)
+            run_response_case(obj, fake)
         finally:
             setattr(tr, "Serial", original_serial_symbol)
 
