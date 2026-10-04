@@ -1,0 +1,37 @@
+from wm163_service_flash_live import encode_raw, HOST_RAW
+from wm163_service_flash_protocol import (
+    CMD_ENTER,
+    FLAG_REQ_ACK,
+    SESSION_A_DST_RAW,
+    SESSION_A_SEQ0,
+    session_a_enter_payload,
+)
+from mini3_gimbal_cal import parse_frame
+
+
+def test_encode_raw_session_a_enter_roundtrip():
+    pkt = encode_raw(
+        dst_raw=SESSION_A_DST_RAW,
+        seq=SESSION_A_SEQ0,
+        cmd_id=CMD_ENTER,
+        payload=session_a_enter_payload(),
+    )
+    frame = parse_frame(pkt)
+    assert pkt[4] == HOST_RAW
+    assert pkt[5] == SESSION_A_DST_RAW
+    assert frame.seq == SESSION_A_SEQ0
+    assert frame.cmd_set == 0
+    assert frame.cmd_id == CMD_ENTER
+    assert frame.payload == b"\x00" * 9
+    assert pkt[8] == FLAG_REQ_ACK
+
+
+def test_raw_node_bytes_are_not_rewritten():
+    pkt = encode_raw(
+        dst_raw=0x28,
+        seq=0,
+        cmd_id=0x01,
+        payload=b"",
+    )
+    assert pkt[4] == 0x2A
+    assert pkt[5] == 0x28
