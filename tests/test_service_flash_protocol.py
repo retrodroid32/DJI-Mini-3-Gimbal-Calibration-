@@ -160,7 +160,7 @@ def test_known_v30_session_b_record_and_finalize_sequence_invariants():
     ]
     assert session_b_record_count(files) == 53087
     # ENTER and REPORT_SIZE consume 0x3022 and 0x3023; first 0x2A record is 0x3024.
-    assert seq_after(0x3024, 53087) == 0xFF83
+    # Genuine capture leaves one unused sequence after each of 7 START records.\n    assert seq_after(0x3024, 53087 + 7) == 0xFF8A
 
 
 def test_recovered_sequence_defaults_and_drain_cadence():
@@ -204,7 +204,7 @@ def test_recovered_sequence_helpers_match_known_transfers():
         ("1100", b"x" * 94720),
         ("1200", b"x" * 56352),
     ]
-    assert session_b_finalize_seq(files) == 0xFF83
+    assert session_b_finalize_seq(files) == 0xFF8A
 
 
 def test_recovered_session_b_loader_probe():
@@ -285,3 +285,43 @@ def test_recovered_session_b_finalize_gate():
     assert not session_b_finalize_gate(stream_exhausted=False, final_drain_completed=True)
     assert not session_b_finalize_gate(stream_exhausted=True, final_drain_completed=False)
     assert not session_b_finalize_gate(stream_exhausted=False, final_drain_completed=False)
+
+
+def test_captured_session_a_data_uses_chunk_index_not_byte_offset():
+    from wm163_service_flash_protocol import session_a_stream_payload
+
+    chunk = b"x" * CHUNK
+    p0 = session_a_stream_payload(0, chunk)
+    p1 = session_a_stream_payload(1, chunk)
+    p2 = session_a_stream_payload(2, chunk)
+
+    assert p0[:7] == b"\x00\x00\x00\x00\x00\xd4\x03"
+    assert p1[:7] == b"\x00\x01\x00\x00\x00\xd4\x03"
+    assert p2[:7] == b"\x00\x02\x00\x00\x00\xd4\x03"
+
+
+def test_captured_session_b_data_uses_per_file_chunk_index():
+    from wm163_service_flash_protocol import session_b_file_data_payload
+
+    p0 = session_b_file_data_payload(0, b"abc")
+    p1 = session_b_file_data_payload(1, b"def")
+    p2 = session_b_file_data_payload(2, b"ghi")
+
+    assert p0[:5] == b"\x02\x00\x00\x00\x00"
+    assert p1[:5] == b"\x02\x01\x00\x00\x00"
+    assert p2[:5] == b"\x02\x02\x00\x00\x00"
+
+
+def test_captured_v30_finalize_seq_includes_one_gap_per_file():
+    from wm163_service_flash_protocol import session_b_finalize_seq
+
+    files = [
+        ("wm163.cfg.sig", b"x" * 2336),
+        ("0100", b"x" * 39459264),
+        ("0105", b"x" * 245824),
+        ("0306", b"x" * 1760032),
+        ("0905", b"x" * 10390912),
+        ("1100", b"x" * 94720),
+        ("1200", b"x" * 56352),
+    ]
+    assert session_b_finalize_seq(files) == 0xFF8A
