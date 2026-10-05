@@ -90,12 +90,17 @@ def session_b_report_size_payload(size: int) -> bytes:
     return report_size_payload(size, SESSION_B_FINAL_SELECTOR)
 
 
-def session_a_stream_payload(offset: int, chunk: bytes) -> bytes:
-    if not 0 <= offset <= 0xFFFFFFFF:
-        raise ValueError("offset out of uint32 range")
+def session_a_stream_payload(chunk_index: int, chunk: bytes) -> bytes:
+    """Build captured WM163 Session-A DATA payload.
+
+    The 32-bit field is a chunk index (0, 1, 2, ...), not a byte offset.
+    This was confirmed from a genuine Dr.Grey WM163 Service FW USB capture.
+    """
+    if not 0 <= chunk_index <= 0xFFFFFFFF:
+        raise ValueError("chunk_index out of uint32 range")
     if len(chunk) > CHUNK:
-        raise ValueError(f"chunk exceeds recovered {CHUNK}-byte limit")
-    return b"\x00" + struct.pack("<I", offset) + struct.pack("<H", len(chunk)) + chunk
+        raise ValueError(f"chunk exceeds captured {CHUNK}-byte limit")
+    return b"\x00" + struct.pack("<I", chunk_index) + struct.pack("<H", len(chunk)) + chunk
 
 
 def session_a_finalize_payload(loader: bytes) -> bytes:
@@ -113,12 +118,16 @@ def session_b_file_start_payload(filename: str, blob: bytes) -> bytes:
     return b"\x01" + struct.pack("<I", len(blob)) + bytes([len(name) + 1]) + name + b"\x00" * 4
 
 
-def session_b_file_data_payload(offset: int, chunk: bytes) -> bytes:
-    if not 0 <= offset <= 0xFFFFFF:
-        raise ValueError("Session-B offset exceeds recovered 24-bit field")
+def session_b_file_data_payload(chunk_index: int, chunk: bytes) -> bytes:
+    """Build captured WM163 Session-B DATA record.
+
+    The 24-bit field is a per-file chunk index, not a byte offset.
+    """
+    if not 0 <= chunk_index <= 0xFFFFFF:
+        raise ValueError("Session-B chunk_index exceeds captured 24-bit field")
     if len(chunk) > CHUNK:
-        raise ValueError(f"chunk exceeds recovered {CHUNK}-byte limit")
-    return b"\x02" + struct.pack("<I", offset)[:3] + b"\x00" + chunk
+        raise ValueError(f"chunk exceeds captured {CHUNK}-byte limit")
+    return b"\x02" + struct.pack("<I", chunk_index)[:3] + b"\x00" + chunk
 
 
 def session_b_file_end_payload(blob: bytes) -> bytes:
@@ -217,10 +226,17 @@ def session_a_next_seq_after_loader(loader_size: int) -> int:
 
 
 def session_b_finalize_seq(files) -> int:
-    """Expected B/FINALIZE sequence for an already-selected Session-B file set."""
-    # ENTER and REPORT_SIZE consume the first two sequence values.
+    """Expected captured B/FINALIZE sequence for a selected Session-B file set.
+
+    Genuine Dr.Grey leaves one sequence value unused immediately after each
+    file START record.  Therefore the final sequence advances by one extra
+    value per transferred file.
+    """
     first_record_seq = seq_after(SESSION_B_SEQ0, 2)
-    return seq_after(first_record_seq, session_b_record_count(files))
+    return seq_after(
+        first_record_seq,
+        session_b_record_count(files) + len(files),
+    )
 
 
 def ctrl_ack_payload_accepted(payload: bytes) -> bool:
