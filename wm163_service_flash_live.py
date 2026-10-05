@@ -86,7 +86,7 @@ HOST_RAW = 0x2A
 KNOWN_LOADER_MD5 = "72f7a3d3f40648c9e6c02583360c16b3"
 KNOWN_LOADER_SIZE = 743_120
 KNOWN_V30_TOTAL_SIZE = 52_009_440
-KNOWN_V30_FINALIZE_SEQ = 0xFF83
+KNOWN_V30_FINALIZE_SEQ = 0xFF8A
 KNOWN_LIVE_SESSION_A_VERIFY_FAILURE_F5 = True
 
 
@@ -269,16 +269,19 @@ def run_session_a(tp: SerialTransport, loader: bytes, *, verbose: bool = False) 
     ctrl(CMD_PREPARE_A, session_a_prepare_payload(), "A/PREPARE")
     ctrl(CMD_REPORT_SIZE, session_a_report_size_payload(len(loader)), "A/REPORT_SIZE")
 
-    for offset in range(0, len(loader), CHUNK):
+    for chunk_index, offset in enumerate(range(0, len(loader), CHUNK)):
         chunk = loader[offset : offset + CHUNK]
-        if verbose and (offset == 0 or offset % (CHUNK * 64) == 0):
-            print(f"A/DATA: {offset}/{len(loader)} seq=0x{seq:04x}")
+        if verbose and (chunk_index == 0 or chunk_index % 64 == 0):
+            print(
+                f"A/DATA: chunk={chunk_index} bytes={offset}/{len(loader)} "
+                f"seq=0x{seq:04x}"
+            )
         tp.stream(
             dst_raw=SESSION_A_DST_RAW,
             seq=seq,
             cmd_id=CMD_STREAM_A,
-            payload=session_a_stream_payload(offset, chunk),
-            what=f"A/DATA offset={offset}",
+            payload=session_a_stream_payload(chunk_index, chunk),
+            what=f"A/DATA chunk={chunk_index}",
         )
         seq = (seq + 1) & 0xFFFF
 
@@ -359,8 +362,17 @@ def run_session_b(
             print(f"B/START {name} size={len(blob)} seq=0x{seq:04x}")
         send_record(session_b_file_start_payload(name, blob))
 
-        for offset in range(0, len(blob), CHUNK):
-            send_record(session_b_file_data_payload(offset, blob[offset : offset + CHUNK]))
+        # Genuine Dr.Grey WM163 capture leaves the sequence immediately after
+        # each START record unused before the first DATA record for that file.
+        seq = (seq + 1) & 0xFFFF
+
+        for chunk_index, offset in enumerate(range(0, len(blob), CHUNK)):
+            send_record(
+                session_b_file_data_payload(
+                    chunk_index,
+                    blob[offset : offset + CHUNK],
+                )
+            )
 
         send_record(session_b_file_end_payload(blob))
         if verbose:
@@ -450,12 +462,12 @@ def main() -> int:
         print("Re-run with --yes only after the aircraft read-only preflight has passed.")
         return 0
 
-    if KNOWN_LIVE_SESSION_A_VERIFY_FAILURE_F5 and not args.ack_f5_retry_risk:
+    if args.yes:
         print(
-            "BLOCKED: a prior live Session-A attempt reached A/VERIFY and was rejected "
-            "with status F5. Offline testing now shows the recreated gray-flasher "
-            "transport is equivalent to DrGrey for reset/write/immediate-response "
-            "behavior. A second attempt requires --ack-f5-retry-risk in addition to --yes.",
+            "BLOCKED: live flashing is disabled after packet-capture validation "
+            "found protocol mismatches in the previous reconstruction. "
+            "Use dry-run/offline trace comparison only until generated packets "
+            "match the genuine Dr.Grey WM163 capture.",
             file=sys.stderr,
         )
         return 6
