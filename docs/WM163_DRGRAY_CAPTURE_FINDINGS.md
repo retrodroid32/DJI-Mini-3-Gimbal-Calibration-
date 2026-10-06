@@ -274,3 +274,74 @@ final B/FINALIZE at 0xFF8A.
 Live flashing remains disabled until this result is reviewed together with
 remaining state-machine/timing/re-enumeration behavior. Packet-byte parity alone
 does not prove that a live implementation is safe.
+
+
+## State-machine timing and B/FINALIZE behavior
+
+Additional timing analysis of the genuine Dr.Grey capture established:
+
+### A -> temporary loader -> B
+
+```text
+A/CMD_0B TX                         t = 0
+A/CMD_0B ACK status 00              +0.571 ms
+loader probe 00/01 -> dst 0x28      +1.977 ms
+"WM163 UAV Ver.A" response          +14.828 ms
+B/ENTER TX                          +57.809 ms
+```
+
+Therefore the genuine tool begins Session B only about 43 ms after receiving
+the temporary-loader identity response.
+
+This is consistent with a short ~40 ms quiet read/drain rather than waiting the
+entire nominal 200 ms drain budget.
+
+### B control timings
+
+```text
+B/ENTER TX -> ACK                   ~24.6 ms
+B/REPORT_SIZE TX -> ACK             ~203.8 ms
+B/ENTER -> B/FINALIZE TX            ~54.44 s
+```
+
+### B/FINALIZE response is F7
+
+The genuine captured final exchange is:
+
+```text
+TX:
+dst=0x01 seq=0xFF8A cmdset=0x00 cmd=0x0A
+payload=17 zero bytes
+
+RX:
+src=0x01 dst=0x2A seq=0xFF8A response cmdset=0x00 cmd=0x0A
+payload=F7
+```
+
+Dr.Grey does **not** treat this F7 as a fatal rejection. It immediately enters
+the post-finalize commit/power-off monitoring phase and ultimately reports:
+
+```text
+Service firmware loaded and committed.
+```
+
+Therefore the earlier generic assumption that every control ACK must have an
+empty payload or leading 0x00 is not valid for this Session-B FINALIZE path.
+
+### Post-finalize commit monitoring
+
+The first commit probe is sent about 19.5 ms after B/FINALIZE TX.
+
+Dr.Grey then sends the 00/01 probe to dst 0x28 approximately every 0.512 s.
+Successful responses contain the temporary-loader identity string:
+
+```text
+WM163 UAV Ver.A
+```
+
+The last successful captured response occurs about 58.4 seconds after
+B/FINALIZE. A further probe at about 58.9 seconds receives no normal response,
+followed by USB shutdown/disconnect activity several seconds later.
+
+These observations must be incorporated into the live orchestration model
+before live flashing can be considered.
