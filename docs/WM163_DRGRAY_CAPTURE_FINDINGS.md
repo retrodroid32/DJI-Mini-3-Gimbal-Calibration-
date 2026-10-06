@@ -208,3 +208,69 @@ capture-backed correction is proven.
 - Known WM163 V30 B/FINALIZE sequence is now 0xFF8A.
 - Existing WM163 04/12 keepalive is marked capture-confirmed.
 - Live service flashing remains disabled pending full offline trace parity.
+
+
+## Offline generated trace vs genuine capture
+
+The project-generated offline trace from the exact known WM163 V30 package and
+Session-A loader was compared directly against the genuine Dr.Grey USBPcap
+capture.
+
+Generated trace:
+
+```text
+total rows: 53861
+Session A rows: 764
+Session B rows: 53097
+Session-B sequence-gap rows: 7
+Session-B transmitted packets: 53090
+B/FINALIZE: 0xFF8A
+```
+
+### Session A
+
+All **764/764** generated Session-A packets were found in the genuine capture
+**byte-for-byte and in order**, including:
+
+```text
+A/ENTER
+A/PREPARE
+A/REPORT_SIZE
+759 A/DATA records
+A/VERIFY
+A/CMD_0B
+```
+
+This confirms the corrected chunk-index semantics and all encoded Session-A
+packet bytes for the captured known-good run.
+
+### Session B
+
+Of **53,090** generated transmitted Session-B packets, **53,064** were found in
+the genuine capture byte-for-byte and in order.
+
+The only 26 generated packets not present in the capture occur in two
+contiguous 13-packet DATA runs:
+
+```text
+0x7660 .. 0x766C
+0xB960 .. 0xB96C
+```
+
+Exact matching resumes immediately at 0x766D and 0xB96D respectively and remains
+synchronized afterward through B/FINALIZE.
+
+Because the genuine Dr.Grey flash completed successfully and the packet stream
+re-synchronizes exactly after both gaps, these two runs are treated as likely
+capture omissions rather than evidence of a generated-protocol mismatch.
+
+### Current parity conclusion
+
+For every transmitted packet that is present in the capture, the current
+offline generator matches the genuine Dr.Grey packet **byte-for-byte** through
+the full Session-A/Session-B sequence, including the captured sequence gaps and
+final B/FINALIZE at 0xFF8A.
+
+Live flashing remains disabled until this result is reviewed together with
+remaining state-machine/timing/re-enumeration behavior. Packet-byte parity alone
+does not prove that a live implementation is safe.
