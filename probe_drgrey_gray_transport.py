@@ -230,6 +230,76 @@ def run_repeat_case(obj, fake: FakeSerial, *, reset_after: str, count: int) -> N
         print("  ", item)
 
 
+
+def run_send_and_collect_cases(obj, fake: FakeSerial) -> None:
+    packet = bytes.fromhex("55 0d 04 33 2a 28 00 00 40 00 01 00 00")
+
+    print()
+    print("SEND_AND_COLLECT CASE immediate 4-byte response, window_ms=0 read_timeout_ms=1")
+    fake.log.clear()
+    fake.response_on_write = bytes.fromhex("aa bb cc dd")
+    t0 = time.monotonic()
+    try:
+        result = obj.send_and_collect(packet, window_ms=0, read_timeout_ms=1)
+        print(f"return={result!r}")
+    except Exception as exc:
+        print(f"exception={type(exc).__name__}: {exc}")
+    print(f"elapsed_ms={(time.monotonic()-t0)*1000.0:.3f}")
+    print("fake-serial calls:")
+    for item in fake.log:
+        print("  ", item)
+
+    print()
+    print("SEND_AND_COLLECT CASE no response, window_ms=0 read_timeout_ms=1")
+    fake.log.clear()
+    fake.response_on_write = b""
+    t0 = time.monotonic()
+    try:
+        result = obj.send_and_collect(packet, window_ms=0, read_timeout_ms=1)
+        print(f"return={result!r}")
+    except Exception as exc:
+        print(f"exception={type(exc).__name__}: {exc}")
+    print(f"elapsed_ms={(time.monotonic()-t0)*1000.0:.3f}")
+    print("fake-serial calls:")
+    for item in fake.log:
+        print("  ", item)
+
+
+def run_read_burst_cases(obj, fake: FakeSerial) -> None:
+    print()
+    print("READ_BURST CASE preloaded 4 bytes, budget_ms=120 read_timeout_ms=40")
+    fake.log.clear()
+    fake.response_on_write = b""
+    fake._rx[:] = bytes.fromhex("aa bb cc dd")
+    fake.in_waiting = len(fake._rx)
+    t0 = time.monotonic()
+    try:
+        result = obj.read_burst(budget_ms=120, read_timeout_ms=40)
+        print(f"return={result!r}")
+    except Exception as exc:
+        print(f"exception={type(exc).__name__}: {exc}")
+    print(f"elapsed_ms={(time.monotonic()-t0)*1000.0:.3f}")
+    print("fake-serial calls:")
+    for item in fake.log:
+        print("  ", item)
+
+    print()
+    print("READ_BURST CASE empty, budget_ms=5 read_timeout_ms=1")
+    fake.log.clear()
+    fake._rx.clear()
+    fake.in_waiting = 0
+    t0 = time.monotonic()
+    try:
+        result = obj.read_burst(budget_ms=5, read_timeout_ms=1)
+        print(f"return={result!r}")
+    except Exception as exc:
+        print(f"exception={type(exc).__name__}: {exc}")
+    print(f"elapsed_ms={(time.monotonic()-t0)*1000.0:.3f}")
+    print("fake-serial calls:")
+    for item in fake.log:
+        print("  ", item)
+
+
 def main() -> int:
     if sys.version_info[:2] != (3, 14):
         print(
@@ -283,6 +353,8 @@ def main() -> int:
             run_case(obj, fake, reset_after="64", wait_response=False, window_ms=0)
             run_repeat_case(obj, fake, reset_after="64", count=66)
             run_response_case(obj, fake)
+            run_send_and_collect_cases(obj, fake)
+            run_read_burst_cases(obj, fake)
         finally:
             setattr(tr, "Serial", original_serial_symbol)
 
