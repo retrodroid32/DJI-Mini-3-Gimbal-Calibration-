@@ -7,6 +7,7 @@ from wm163_service_cal_40011 import (
     GIMBAL_KEEPALIVE_SEQ,
     KEEPALIVE_IMPLEMENTATION_READY,
     build_airforge_flyc_keepalive_packet,
+    service_cal_precheck_decision,
     build_mini3_gimbal_keepalive_packet,
 )
 
@@ -69,3 +70,22 @@ def test_recovered_keepalive_wire_vectors():
         "55 19 04 e4 0a 04 49 12 40 04 12 "
         "e6 01 43 00 00 00 00 00 00 00 00 08 76 e2"
     )
+
+
+def test_service_cal_precheck_allows_combined_40011_40021():
+    should_run, note = service_cal_precheck_decision(True, True)
+    assert should_run
+    assert "40011 and 40021 confirmed active" in note
+    assert "40021 short repair afterward" in note
+
+
+def test_service_cal_precheck_allows_40011_only():
+    should_run, note = service_cal_precheck_decision(True, False)
+    assert should_run
+    assert "40021 is clear" in note
+
+
+def test_service_cal_precheck_skips_when_40011_is_clear():
+    should_run, note = service_cal_precheck_decision(False, True)
+    assert not should_run
+    assert note == "40011 is already clear."
