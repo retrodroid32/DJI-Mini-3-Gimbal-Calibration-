@@ -153,10 +153,14 @@ def evaluate_wm163_v30_preflight(
     diagnostic_40011_active: bool,
     diagnostic_40021_active: bool,
 ) -> tuple[bool, tuple[str, ...]]:
-    """Offline go/no-go evaluator for the known WM163 V30.00.0100 repair path.
+    """Offline go/no-go evaluator for the known WM163 V30.00.0100 40011 path.
 
-    This contains no transport or flashing code.  It evaluates only the live
+    This contains no transport or flashing code. It evaluates only the live
     read-only state already obtained from the aircraft.
+
+    40021 is deliberately not a blocking condition. A WM163 with both 40011
+    and 40021 follows the validated repair order: Service FW -> Advanced
+    Calibration (40011) -> short 40021 repair -> reboot/verify.
     """
     reasons: list[str] = []
 
@@ -176,9 +180,6 @@ def evaluate_wm163_v30_preflight(
             f"unexpected aircraft antirollback={aircraft_antirollback!r}; expected '0'"
         )
 
-    if diagnostic_40021_active:
-        reasons.append("40021 is active again; do not enter the 40011 service-calibration path")
-
     if not diagnostic_40011_active:
         reasons.append("40011 is not currently active; no 40011 service repair is indicated")
 
@@ -189,6 +190,11 @@ def evaluate_wm163_v30_preflight(
         "WM163 identity confirmed",
         f"aircraft FORMAL {aircraft_formal} is compatible with service 30.00.0100",
         "aircraft antirollback is 0",
-        "40021 is clear",
+        (
+            "40021 is active; combined repair is allowed and 40021 must be repaired "
+            "after Advanced Calibration"
+            if diagnostic_40021_active
+            else "40021 is clear; 40011-only service path is allowed"
+        ),
         "40011 is active",
     )
