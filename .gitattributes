@@ -1,0 +1,2 @@
+# Large binary firmware images are stored with Git LFS.
+firmware/*.bin filter=lfs diff=lfs merge=lfs -text
