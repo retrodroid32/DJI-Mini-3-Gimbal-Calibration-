@@ -42,6 +42,28 @@ KNOWN_PRODUCTION_CANDIDATE_FINALIZE_SEQ = 0x04C0
 KNOWN_PRODUCTION_CANDIDATE_STREAM_SHA256 = (
     "6da89763feb71e837d066ad176b041a9e510c69c49525d2a4cd17863800ce6b8"
 )
+KNOWN_PRODUCTION_ROLLOVER_PACKETS = (
+    (
+        0xFFFE,
+        "DATA wm163_0905_v01.00.01.27_20220919.pro.fw.sig chunk=9547",
+        "4cbf654ee6083043450cf4faac511dd07ced347548ad5a88d201bbf805b23d00",
+    ),
+    (
+        0xFFFF,
+        "DATA wm163_0905_v01.00.01.27_20220919.pro.fw.sig chunk=9548",
+        "8177cf57f5307c3827dae9e8bf813d9cf1326e75d3731a42f0b12326d634d4c0",
+    ),
+    (
+        0x0000,
+        "DATA wm163_0905_v01.00.01.27_20220919.pro.fw.sig chunk=9549",
+        "45e150d3799947769a066ae0592409b64b70e538b27f465a45f619be281655b9",
+    ),
+    (
+        0x0001,
+        "DATA wm163_0905_v01.00.01.27_20220919.pro.fw.sig chunk=9550",
+        "6c6355cbfa3431c78d8514b9442eba357a1bbab9c710dd078836683a9e0e179f",
+    ),
+)
 
 
 def summarize(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str, object]:
@@ -69,7 +91,17 @@ def summarize(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str
             payload=payload,
         )
         if seq in (0xFFFE, 0xFFFF, 0x0000, 0x0001):
-            boundary.append((seq, label, pkt.hex(" ")))
+            boundary.append(
+                (
+                    seq,
+                    label,
+                    hashlib.sha256(pkt).hexdigest(),
+                    len(pkt),
+                    pkt[6:8].hex(" "),
+                    pkt[:24].hex(" "),
+                    pkt[-16:].hex(" "),
+                )
+            )
         sha.update(pkt)
         packet_count += 1
         old = seq
@@ -132,6 +164,18 @@ def summarize(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str
             f"got {stream_sha256}"
         )
 
+    boundary_fingerprints = tuple(
+        (seq, label, packet_sha256)
+        for seq, label, packet_sha256, _packet_len, _seq_bytes, _prefix, _suffix
+        in boundary
+    )
+    if boundary_fingerprints != KNOWN_PRODUCTION_ROLLOVER_PACKETS:
+        raise ValueError(
+            "production candidate rollover-packet mismatch: "
+            f"expected {KNOWN_PRODUCTION_ROLLOVER_PACKETS!r}, "
+            f"got {boundary_fingerprints!r}"
+        )
+
     return {
         "file_count": len(files),
         "transfer_size": session_b_total_size(files),
@@ -176,9 +220,14 @@ def main() -> int:
     print(f"sequence_wraps_before_or_at_finalize={result['sequence_wraps_before_or_at_finalize']}")
     print(f"finalize_seq=0x{result['finalize_seq']:04X}")
     print(f"candidate_stream_sha256={result['stream_sha256']}")
-    for seq, label, packet_hex in result["boundary"]:
+    for seq, label, packet_sha256, packet_len, seq_bytes, prefix, suffix in result["boundary"]:
         print(f"boundary seq=0x{seq:04X} label={label}")
-        print(f"  packet={packet_hex}")
+        print(
+            f"  packet_len={packet_len} seq_bytes={seq_bytes} "
+            f"sha256={packet_sha256}"
+        )
+        print(f"  prefix={prefix}")
+        print(f"  suffix={suffix}")
 
     print()
     print("NO SERIAL PORT WAS OPENED. NO FIRMWARE WAS WRITTEN.")
