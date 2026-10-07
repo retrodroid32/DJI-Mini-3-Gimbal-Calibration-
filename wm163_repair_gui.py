@@ -33,6 +33,7 @@ import wm163_assistant_cache as assistant_cache
 import wm163_private_fw as private_fw
 import wm163_production_fw as production_fw
 import wm163_live_preflight as live_preflight
+import analyze_wm163_restore_hypotheses as restore_hypotheses
 from wm163_service_fw_inspect import inspect_package
 
 try:
@@ -593,12 +594,20 @@ class WM163RepairGUI:
         validate_production_btn.grid(row=4, column=0, columnspan=3, sticky="ew", pady=3)
         self.action_buttons.append(validate_production_btn)
 
+        restore_analysis_btn = ttk.Button(
+            files,
+            text="Analyze Production Restore — OFFLINE",
+            command=self.analyze_production_restore_offline,
+        )
+        restore_analysis_btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=3)
+        self.action_buttons.append(restore_analysis_btn)
+
         live_preflight_btn = ttk.Button(
             files,
-            text="Run READ-ONLY Live Preflight",
+            text="Run READ-ONLY Live Preflight (future hardware only)",
             command=self.run_live_preflight,
         )
-        live_preflight_btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(3, 8))
+        live_preflight_btn.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(3, 8))
         self.action_buttons.append(live_preflight_btn)
 
         progress_outer, progress_body = self._panel(body, "Flash Progress")
@@ -1255,6 +1264,86 @@ class WM163RepairGUI:
                 self.flash_vars["Service FW"].set("30.00.0100 — INVALID")
 
         self._run_task("Validate Service Firmware", task, done)
+
+    def analyze_production_restore_offline(self) -> None:
+        package = self.production_package_path.get().strip()
+        if not package:
+            repo_package = production_fw.find_repo_production_archive(
+                pathlib.Path(__file__).resolve().parent
+            )
+            if repo_package is not None:
+                package = str(repo_package)
+                self.production_package_path.set(package)
+
+        if not package:
+            messagebox.showwarning(
+                "Production firmware not found",
+                "Select the exact WM163 v01.00.0500 production archive first.",
+                parent=self.root,
+            )
+            return
+
+        pkg_path = pathlib.Path(package)
+        if not pkg_path.is_file():
+            messagebox.showwarning(
+                "Full production archive required",
+                "Offline restore analysis requires the exact full WM163 production .bin.",
+                parent=self.root,
+            )
+            return
+
+        self.flash_progress["value"] = 0
+        self.flash_progress_label.configure(
+            text="Comparing production restore payload hypotheses OFFLINE..."
+        )
+
+        def task():
+            info = production_fw.validate_production_archive(pkg_path)
+            files = service_fw._package_transfer_files(pkg_path)
+            result = restore_hypotheses.compare_payload_grammars(files)
+
+            print("WM163 production restore OFFLINE hypothesis comparison: PASS")
+            print(f"device={info.device}")
+            print(f"formal={info.formal}")
+            print(f"signed_members={result['file_count']}")
+            print(f"data_records={result['data_records']}")
+            print(
+                "payload_records_including_report_and_finalize="
+                f"{result['payload_records_including_report_and_finalize']}"
+            )
+            print(f"transfer_size={result['transfer_size']}")
+            print(f"payload_stream_sha256={result['payload_stream_sha256']}")
+            print("mini2style_payload_grammar_vs_wm163_session_b=BYTE_IDENTICAL")
+            print(
+                "service_loader_candidate_finalize_seq="
+                f"0x{result['service_loader_candidate_finalize_seq']:04X}"
+            )
+            print("wm163_stock_restore_outer_orchestration=UNPROVEN")
+            print("No serial port was opened and no firmware was written.")
+            return 0
+
+        def done(rc, _output):
+            if rc == 0:
+                self.flash_progress["value"] = 100
+                self.flash_progress_label.configure(
+                    text=(
+                        "OFFLINE restore evidence PASS: payload grammars are "
+                        "byte-identical. Outer stock-restore orchestration remains unproven."
+                    )
+                )
+                self.flash_vars["Validation"].set(
+                    "OFFLINE RESTORE EVIDENCE PASS — ORCHESTRATION UNPROVEN"
+                )
+            else:
+                self.flash_progress["value"] = 0
+                self.flash_progress_label.configure(
+                    text=f"OFFLINE restore analysis FAILED (rc={rc})."
+                )
+                self.flash_vars["Validation"].set(
+                    f"OFFLINE RESTORE ANALYSIS FAILED — rc={rc}"
+                )
+
+        self._run_task("Analyze Production Restore — OFFLINE", task, done)
 
     def run_live_preflight(self) -> None:
         if not self._require_connection():
