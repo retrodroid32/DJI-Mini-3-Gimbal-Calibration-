@@ -47,3 +47,30 @@ def test_exact_production_transfer_invariants_require_uint16_rollover():
     )
     assert unwrapped_finalize > 0xFFFF
     assert (unwrapped_finalize & 0xFFFF) == 0x04C0
+
+
+def test_uint16_rollover_matches_wire_encoding():
+    from wm163_service_flash_live import encode_raw
+    from wm163_service_flash_protocol import CMD_STREAM_B, SESSION_B_DST_RAW, seq_after
+
+    assert seq_after(0xFFFE, 1) == 0xFFFF
+    assert seq_after(0xFFFF, 1) == 0x0000
+    assert seq_after(0xFFFF, 2) == 0x0001
+
+    packets = [
+        encode_raw(
+            dst_raw=SESSION_B_DST_RAW,
+            seq=seq,
+            cmd_id=CMD_STREAM_B,
+            payload=b"\x02\x00\x00\x00\x00",
+        )
+        for seq in (0xFFFE, 0xFFFF, 0x0000, 0x0001)
+    ]
+
+    # DUML sequence is little-endian at bytes 6..7.
+    assert [packet[6:8] for packet in packets] == [
+        b"\xfe\xff",
+        b"\xff\xff",
+        b"\x00\x00",
+        b"\x01\x00",
+    ]
