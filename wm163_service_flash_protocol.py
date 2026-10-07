@@ -54,6 +54,7 @@ COMMIT_HOLD_DEFAULT_SECONDS = 150
 
 SESSION_A_FINAL_SELECTOR = b"\x01\x00"
 SESSION_B_FINAL_SELECTOR = b"\x01\x02"
+SESSION_B_FINALIZE_COMMIT_STATUS = 0xF7
 
 
 @dataclass(frozen=True)
@@ -265,3 +266,19 @@ def session_b_finalize_gate(*, stream_exhausted: bool, final_drain_completed: bo
     this boundary.
     """
     return bool(stream_exhausted and final_drain_completed)
+
+
+def session_b_finalize_ack_accepted(payload: bytes) -> bool:
+    """Capture-backed WM163 Session-B FINALIZE ACK rule.
+
+    A genuine successful Dr.Grey WM163 V30 flash returned payload F7 for
+    General 0x00/0x0A at B/FINALIZE and then entered the commit/reboot phase.
+    Keep this exception scoped only to Session-B FINALIZE; do not weaken the
+    generic control-ACK status rule.
+    """
+    status = bytes(payload)[:1]
+    return status in (
+        b"",
+        b"\x00",
+        bytes([SESSION_B_FINALIZE_COMMIT_STATUS]),
+    )
