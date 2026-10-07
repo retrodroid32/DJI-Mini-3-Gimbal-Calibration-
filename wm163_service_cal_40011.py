@@ -146,6 +146,26 @@ def send_stage(ser_obj, reader: m.FrameReader, name: str, payload: bytes,
     return False
 
 
+def service_cal_precheck_decision(
+    active_40011: bool,
+    active_40021: bool,
+) -> tuple[bool, str]:
+    """Decide whether the 40011 calibration stages should run.
+
+    40021 is not a blocker. When both faults are active, 40011 is repaired
+    first under Service FW, then the independent short 40021 repair follows.
+    """
+
+    if not active_40011:
+        return False, "40011 is already clear."
+    if active_40021:
+        return True, (
+            "40011 and 40021 confirmed active. Continuing Advanced Calibration "
+            "for 40011 first; run the confirmed 40021 short repair afterward."
+        )
+    return True, "40011 confirmed active; 40021 is clear."
+
+
 def run(port: str, baudrate: int, precheck: float, stage_timeout: float,
         verify: float, verbose: int) -> int:
     if not KEEPALIVE_IMPLEMENTATION_READY:
@@ -193,14 +213,14 @@ def run(port: str, baudrate: int, precheck: float, stage_timeout: float,
             if not saw_status:
                 print("REFUSED: no gimbal 00/F1 status observed; nothing sent.", file=sys.stderr)
                 return 6
-            if active_40021:
-                print("REFUSED: 40021 is active again. Run the confirmed 40021 repair first.", file=sys.stderr)
-                return 7
-            if not active_40011:
-                print("40011 is already clear.")
+            should_run, route_note = service_cal_precheck_decision(
+                active_40011,
+                active_40021,
+            )
+            print(route_note)
+            if not should_run:
                 return 0
 
-            print("40011 confirmed active and 40021 clear.")
             if not send_stage(ser_obj, reader, "Joint Coarse", b"\x01", stage_timeout, verbose):
                 print("STOPPED: Joint Coarse did not reach 100% SUCCESS.", file=sys.stderr)
                 return 8
