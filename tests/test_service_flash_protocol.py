@@ -325,3 +325,17 @@ def test_captured_v30_finalize_seq_includes_one_gap_per_file():
         ("1200", b"x" * 56352),
     ]
     assert session_b_finalize_seq(files) == 0xFF8A
+
+
+def test_capture_backed_b_finalize_f7_acceptance():
+    from wm163_service_flash_protocol import (
+        SESSION_B_FINALIZE_COMMIT_STATUS,
+        session_b_finalize_ack_accepted,
+    )
+
+    assert SESSION_B_FINALIZE_COMMIT_STATUS == 0xF7
+    assert session_b_finalize_ack_accepted(b"")
+    assert session_b_finalize_ack_accepted(b"\x00")
+    assert session_b_finalize_ack_accepted(b"\xF7")
+    assert not session_b_finalize_ack_accepted(b"\x01")
+    assert not session_b_finalize_ack_accepted(b"\xF5")
