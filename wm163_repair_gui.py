@@ -28,6 +28,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import mini3_gimbal_cal as cal
 import wm163_service_flash_live as service_fw
+import wm163_assistant_cache as assistant_cache
 from wm163_service_fw_inspect import inspect_package
 
 try:
@@ -87,6 +88,7 @@ class WM163RepairGUI:
         self.service_package_path = tk.StringVar(value="")
         self.service_loader_path = tk.StringVar(value="")
         self.production_package_path = tk.StringVar(value="")
+        self._assistant_cache_matches = []
 
         self.device_vars = {
             "Model": tk.StringVar(value="DJI Mini 3 / WM163"),
@@ -103,6 +105,7 @@ class WM163RepairGUI:
             "Detected Model": tk.StringVar(value="DJI Mini 3 / WM163"),
             "Current FW": tk.StringVar(value="—"),
             "Service FW": tk.StringVar(value="30.00.0100"),
+            "Production FW": tk.StringVar(value="Not found"),
             "Selected File": tk.StringVar(value="—"),
             "File Size": tk.StringVar(value="—"),
             "MD5": tk.StringVar(value="—"),
@@ -114,6 +117,7 @@ class WM163RepairGUI:
         self._build_ui()
         self.refresh_ports()
         self.root.after(75, self._drain_events)
+        self.root.after(700, self._auto_find_assistant_firmware_silent)
 
     # ---------- styling ----------
 
@@ -509,6 +513,7 @@ class WM163RepairGUI:
             ("Detected Model", "Detected Model"),
             ("Current FW", "Current FW"),
             ("Service FW", "Service FW"),
+            ("Production FW", "Production FW"),
             ("Selected File", "Selected File"),
             ("File Size", "File Size"),
             ("MD5", "MD5"),
@@ -540,13 +545,31 @@ class WM163RepairGUI:
             variable=self.service_loader_path,
             command=self.choose_loader,
         )
-        self._file_row(
-            files,
-            row=2,
-            label="Production/current FW",
-            variable=self.production_package_path,
-            command=self.choose_production_package,
+        ttk.Label(files, text="DJI Assistant production cache:", style="InfoName.TLabel").grid(
+            row=2, column=0, sticky="e", padx=(0, 8), pady=4
         )
+        production_entry = tk.Entry(
+            files,
+            textvariable=self.production_package_path,
+            bg=PANEL_ALT,
+            fg=TEXT,
+            insertbackground=GREEN,
+            relief="flat",
+        )
+        production_entry.grid(row=2, column=1, sticky="ew", pady=4)
+
+        production_buttons = ttk.Frame(files, style="Panel.TFrame")
+        production_buttons.grid(row=2, column=2, padx=(8, 0), pady=4, sticky="e")
+        ttk.Button(
+            production_buttons,
+            text="Auto Find",
+            command=self.auto_find_assistant_firmware,
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            production_buttons,
+            text="Browse Folder…",
+            command=self.choose_production_cache,
+        ).pack(side="left")
 
         validate_btn = ttk.Button(files, text="Validate Service Firmware", command=self.validate_service_fw)
         validate_btn.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(9, 3))
@@ -588,8 +611,9 @@ class WM163RepairGUI:
             body,
             text=(
                 "Service FW live mode is still hard-disabled in wm163_service_flash_live.py. "
-                "Production/current-firmware restore will remain disabled until its own "
-                "package format and live restore sequence are independently validated."
+                "The DJI Assistant production cache finder is read-only. Production "
+                "firmware restore will remain disabled until its package/cache format and "
+                "live restore sequence are independently validated."
             ),
             style="Locked.TLabel",
             wraplength=1050,
@@ -896,18 +920,104 @@ class WM163RepairGUI:
         if path:
             self.service_loader_path.set(path)
 
-    def choose_production_package(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Select Production / Current Firmware",
-            filetypes=[("DJI firmware", "*.bin"), ("All files", "*.*")],
+    def _auto_find_assistant_firmware_silent(self) -> None:
+        # Startup convenience: search quietly once. The user can always press
+        # Auto Find again after DJI Assistant downloads/refreshes firmware.
+        if self.busy:
+            self.root.after(1000, self._auto_find_assistant_firmware_silent)
+            return
+        self.auto_find_assistant_firmware(silent=True)
+
+    def auto_find_assistant_firmware(self, silent: bool = False) -> None:
+        def task():
+            roots = assistant_cache.candidate_roots()
+            print("Searching DJI Assistant firmware cache locations:")
+            for root in roots:
+                print(f"  {root}")
+            matches = assistant_cache.find_wm163_assistant_firmware()
+            self._assistant_cache_matches = matches
+            if not matches:
+                print("No WM163 DJI Assistant firmware cache was found.")
+                print(
+                    "Open DJI Assistant 2 (Consumer Drones Series), connect the Mini 3, "
+                    "open Firmware Update and let it download/refresh v01.00.0500, then rescan."
+                )
+                return 4
+
+            print(f"Found {len(matches)} WM163 firmware cache candidate(s):")
+            for idx, item in enumerate(matches, start=1):
+                print(f"  {idx}. {assistant_cache.describe_cached_firmware(item)}")
+            return 0
+
+        def done(rc, _output):
+            if rc == 0 and self._assistant_cache_matches:
+                best = self._assistant_cache_matches[0]
+                self.production_package_path.set(str(best.display_path))
+                suffix = "archive" if best.kind == "archive" else "module cache"
+                completeness = "complete" if best.complete else "incomplete"
+                self.flash_vars["Production FW"].set(
+                    f"{best.formal or '?'} — {suffix}, {completeness}"
+                )
+                self._append_log(
+                    f"Selected DJI Assistant WM163 production cache: {best.display_path}\n"
+                )
+                if best.formal != assistant_cache.PREFERRED_PRODUCTION_FORMAL and not silent:
+                    messagebox.showwarning(
+                        "Different WM163 firmware version",
+                        f"Best WM163 cache found is {best.formal or 'unknown'}, not "
+                        f"{assistant_cache.PREFERRED_PRODUCTION_FORMAL}.",
+                        parent=self.root,
+                    )
+            elif not silent:
+                messagebox.showinfo(
+                    "WM163 production firmware not found",
+                    "No cached WM163 firmware was found.\n\n"
+                    "In DJI Assistant 2 (Consumer Drones Series), connect the Mini 3, "
+                    "open Firmware Update, and let Assistant download/refresh v01.00.0500. "
+                    "Then click Auto Find again.",
+                    parent=self.root,
+                )
+
+        self._run_task("Auto-find DJI Assistant WM163 Firmware", task, done)
+
+    def choose_production_cache(self) -> None:
+        path = filedialog.askdirectory(
+            title="Select DJI Assistant firmware/cache folder"
         )
-        if path:
-            self.production_package_path.set(path)
-            messagebox.showinfo(
-                "Restore path not enabled",
-                "The file is selected for future restore support, but production/current "
-                "firmware flashing is not implemented yet.",
-            )
+        if not path:
+            return
+
+        root = pathlib.Path(path)
+
+        def task():
+            matches = assistant_cache.find_wm163_assistant_firmware(roots=[root])
+            self._assistant_cache_matches = matches
+            if not matches:
+                print(f"No WM163 cfg/archive found below: {root}")
+                return 4
+            for idx, item in enumerate(matches, start=1):
+                print(f"  {idx}. {assistant_cache.describe_cached_firmware(item)}")
+            return 0
+
+        def done(rc, _output):
+            if rc == 0 and self._assistant_cache_matches:
+                best = self._assistant_cache_matches[0]
+                self.production_package_path.set(str(best.display_path))
+                suffix = "archive" if best.kind == "archive" else "module cache"
+                completeness = "complete" if best.complete else "incomplete"
+                self.flash_vars["Production FW"].set(
+                    f"{best.formal or '?'} — {suffix}, {completeness}"
+                )
+            else:
+                messagebox.showwarning(
+                    "No WM163 firmware found",
+                    "That folder does not contain a recognizable WM163 DJI Assistant "
+                    "firmware archive or signed cfg/module set.",
+                    parent=self.root,
+                )
+
+        self._run_task("Inspect DJI Assistant Firmware Folder", task, done)
+
 
     def validate_service_fw(self) -> None:
         package = self.service_package_path.get().strip()
