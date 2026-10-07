@@ -76,6 +76,7 @@ from wm163_service_flash_protocol import (
     session_b_file_data_payload,
     session_b_file_end_payload,
     session_b_file_start_payload,
+    session_b_finalize_ack_accepted,
     session_b_finalize_payload,
     session_b_finalize_seq,
     session_b_report_size_payload,
@@ -176,12 +177,41 @@ class SerialTransport:
         self.ser = ser_obj
         self.reader = FrameReader()
 
-    def write(self, packet: bytes) -> None:
-        # Recovered DrGrey send_like_gray_flasher() default behavior:
-        # reset RX immediately before every gray-flasher write, then write;
-        # no flush call and no post-write sleep.
+    def gray_write(self, packet: bytes) -> None:
+        # DrGrey send_like_gray_flasher(): reset RX immediately before write,
+        # no flush. Used by control/xfer traffic, including Session A.
         self.ser.reset_input_buffer()
         self.ser.write(packet)
+
+    def session_b_write(self, packet: bytes) -> None:
+        # DrGrey EngineTransport.write() -> send_and_collect(window_ms=0,
+        # read_timeout_ms=1): write + flush only. No RX reset and no read.
+        self.ser.write(packet)
+        self.ser.flush()
+
+    def read_burst(
+        self,
+        *,
+        budget_ms: int,
+        read_timeout_ms: int = 40,
+        read_len: int = 4096,
+    ) -> bytes:
+        # DrGrey read_burst(): repeated blocking reads until the first empty
+        # read or until the overall budget expires. Preserve the caller's
+        # serial timeout after the drain.
+        deadline = time.monotonic() + budget_ms / 1000.0
+        out = bytearray()
+        original_timeout = getattr(self.ser, "timeout", None)
+        try:
+            self.ser.timeout = read_timeout_ms / 1000.0
+            while time.monotonic() < deadline:
+                data = self.ser.read(read_len)
+                if not data:
+                    break
+                out.extend(data)
+        finally:
+            self.ser.timeout = original_timeout
+        return bytes(out)
 
     def read_raw_window(self, budget_ms: int) -> bytes:
         # Recovered DrGrey gray-flasher behavior:
@@ -218,7 +248,7 @@ class SerialTransport:
         check_status: bool,
     ):
         packet = encode_raw(dst_raw=dst_raw, seq=seq, cmd_id=cmd_id, payload=payload)
-        self.write(packet)
+        self.gray_write(packet)
 
         deadline = time.monotonic() + deadline_seconds
         while True:
@@ -303,9 +333,12 @@ def wait_for_temp_loader(tp: SerialTransport, *, verbose: bool = False) -> None:
             cmd_id=CMD_COMMIT_PROBE,
             payload=b"",
         )
-        tp.write(pkt)
+        tp.gray_write(pkt)
         raw = tp.read_raw_window(SESSION_B_LOADER_PROBE_XFER_TIMEOUT_MS)
-        raw += tp.read_raw_window(SESSION_B_LOADER_PROBE_DRAIN_MS)
+        raw += tp.read_burst(
+            budget_ms=SESSION_B_LOADER_PROBE_DRAIN_MS,
+            read_timeout_ms=40,
+        )
         if SESSION_B_LOADER_IDENTITY_MARKER in raw:
             if verbose:
                 print(f"Temporary loader detected on probe seq=0x{seq:04x}")
@@ -351,11 +384,14 @@ def run_session_b(
             cmd_id=CMD_STREAM_B,
             payload=payload,
         )
-        tp.write(pkt)
+        tp.session_b_write(pkt)
         seq = (seq + 1) & 0xFFFF
         record_count += 1
         if record_count % SESSION_B_DRAIN_EVERY_RECORDS == 0:
-            tp.read_raw_window(SESSION_B_PERIODIC_DRAIN_MS)
+            tp.read_burst(
+                budget_ms=SESSION_B_PERIODIC_DRAIN_MS,
+                read_timeout_ms=40,
+            )
 
     for name, blob in files:
         if verbose:
@@ -378,7 +414,10 @@ def run_session_b(
         if verbose:
             print(f"B/END   {name} seq_next=0x{seq:04x}")
 
-    tp.read_raw_window(SESSION_B_FINAL_DRAIN_MS)
+    tp.read_burst(
+        budget_ms=SESSION_B_FINAL_DRAIN_MS,
+        read_timeout_ms=40,
+    )
 
     if seq != KNOWN_V30_FINALIZE_SEQ:
         raise FlashError(
@@ -386,7 +425,22 @@ def run_session_b(
             f"got 0x{seq:04x}"
         )
 
-    ctrl(CMD_FINALIZE, session_b_finalize_payload(), "B/FINALIZE")
+    if verbose:
+        print(f"B/FINALIZE: seq=0x{seq:04x}")
+    frame = tp.command(
+        dst_raw=SESSION_B_DST_RAW,
+        seq=seq,
+        cmd_id=CMD_FINALIZE,
+        payload=session_b_finalize_payload(),
+        what="B/FINALIZE",
+        deadline_seconds=CTRL_ACK_DEADLINE_SECONDS,
+        check_status=False,
+    )
+    if not session_b_finalize_ack_accepted(frame.payload):
+        raise FlashError(
+            f"B/FINALIZE: unexpected response ({frame.payload.hex(' ')})"
+        )
+    seq = (seq + 1) & 0xFFFF
 
 
 def hold_for_commit(tp: SerialTransport, *, verbose: bool = False) -> bool:
@@ -402,7 +456,7 @@ def hold_for_commit(tp: SerialTransport, *, verbose: bool = False) -> bool:
                 cmd_id=CMD_COMMIT_PROBE,
                 payload=b"",
             )
-            tp.write(pkt)
+            tp.gray_write(pkt)
             tp.read_raw_window(COMMIT_PROBE_TIMEOUT_MS)
         except Exception as exc:
             if verbose:
