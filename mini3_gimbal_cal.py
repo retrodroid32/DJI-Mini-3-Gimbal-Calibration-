@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover - handled at runtime
     serial = None
 
-VERSION = "0.12.1"
+VERSION = "0.13.0"
 MODEL = "DJI Mini 3"
 PLATFORM = "WM163"
 
@@ -121,8 +121,16 @@ CALIB_COMMANDS = {
 # Protocol-only: live 40011 remains separately interlocked.
 AIRFORGE_FLYC_KEEPALIVE_SEQ = 0x3896
 AIRFORGE_FLYC_KEEPALIVE_INTERVAL_MS = 2000
+WM163_ADV_JOINT_SEQ = 0x0062
+WM163_ADV_LINEAR_SEQ = 0x0063
+WM163_40021_FIX_SEQ = 0x0064
+WM163_40021_REBOOT_SEQ = 0x0065
 WM163_GIMBAL_KEEPALIVE_SEQ = 0x1249
 WM163_GIMBAL_KEEPALIVE_INTERVAL_MS = 3000
+WM163_40021_REBOOT_DELAY_SECONDS = 1.45
+WM163_40021_REBOOT_PAYLOAD = bytes.fromhex(
+    "00 01 00 00 00 00 00 00 00 00 00 00 00 00"
+)
 # Capture-confirmed from a genuine Dr.Grey WM163 Advanced Calibration run.
 WM163_GIMBAL_KEEPALIVE_PAYLOAD = bytes.fromhex(
     "e60143000000000000000008"
@@ -343,6 +351,26 @@ def build_packet(
     out += payload
     out += crc16_duML(bytes(out)).to_bytes(2, "little")
     return bytes(out)
+
+
+def build_wm163_service_calibration_packet(command_name: str) -> bytes:
+    """Build capture-confirmed WM163 Dr.Grey Advanced Calibration request."""
+    if command_name not in CALIB_COMMANDS:
+        raise ValueError(f"unknown calibration command: {command_name}")
+    seq = (
+        WM163_ADV_JOINT_SEQ
+        if command_name == "joint-coarse"
+        else WM163_ADV_LINEAR_SEQ
+    )
+    return build_packet(
+        seq=seq,
+        payload=bytes([CALIB_COMMANDS[command_name]]),
+        sender=COMM_DEV_PC,
+        receiver=COMM_DEV_GIMBAL,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_CALIB,
+    )
 
 
 def build_airforge_flyc_keepalive_packet() -> bytes:
@@ -1462,7 +1490,8 @@ def run_fix_imu_40021_short(
       1) require an active gimbal check-status bit 7 / 40021
       2) GIMBAL 0x04/0x36 payload 42 e9 7f 3f
       3) require the sequence-matched EMPTY response payload
-      4) GENERAL 0x00/0x0B to BATTERY/PMU with empty payload to reboot
+      4) wait ~1.45 s after the empty ACK
+      5) GENERAL 0x00/0x0B to BATTERY/PMU with capture-confirmed 14-byte payload
 
     The DrGrey USB capture shows its normal command transport uses ACK_AFTER_EXEC.
     This function deliberately does not send the 168-byte 0x36 matrix or the
@@ -1523,7 +1552,7 @@ def run_fix_imu_40021_short(
                 print("No write was sent.", file=sys.stderr)
                 return 7
 
-            seq = next_sequence()
+            seq = WM163_40021_FIX_SEQ
             fix_packet = build_packet(
                 seq=seq,
                 payload=IMU_FIX_SHORT_PAYLOAD,
@@ -1565,10 +1594,11 @@ def run_fix_imu_40021_short(
 
             print("0x04/0x36 accepted: received the expected empty ACK.")
 
-            reboot_seq = next_sequence()
+            time.sleep(WM163_40021_REBOOT_DELAY_SECONDS)
+            reboot_seq = WM163_40021_REBOOT_SEQ
             reboot_packet = build_packet(
                 seq=reboot_seq,
-                payload=b"",
+                payload=WM163_40021_REBOOT_PAYLOAD,
                 receiver=COMM_DEV_BATTERY,
                 ack_type=ACK_AFTER_EXEC,
                 cmd_set=CMD_SET_GENERAL,
@@ -1784,17 +1814,26 @@ def run_passive_gimbal_capture(port: str, baudrate: int, seconds: float, verbose
 
 
 def run_calibration(port: str, baudrate: int, command_name: str, monitor_seconds: float, verbose: int) -> int:
+    """Run one capture-backed WM163 Dr.Grey service-calibration phase.
+
+    Genuine WM163 behavior:
+      - 04/08 payload 01 or 02
+      - ACK_AFTER_EXEC request flag (0x40)
+      - no matching 04/08 response is required
+      - progress arrives on 04/30
+      - phase completion is 04/30 payload 64 00
+      - keep service session alive with 04/12 fixed-seq keepalive
+    """
     if serial is None:
         print("ERROR: pyserial is required. Install with: python -m pip install pyserial", file=sys.stderr)
         return 2
 
-    command_byte = CALIB_COMMANDS[command_name]
-    seq = next_sequence()
-    packet = build_packet(seq=seq, payload=bytes([command_byte]))
-
+    packet = build_wm163_service_calibration_packet(command_name)
+    seq = WM163_ADV_JOINT_SEQ if command_name == "joint-coarse" else WM163_ADV_LINEAR_SEQ
     print(f"Model: {MODEL} ({PLATFORM})")
-    print(f"Command: {command_name} (0x{command_byte:02x})")
+    print(f"Command: {command_name} (0x{CALIB_COMMANDS[command_name]:02x})")
     print(f"Port: {port} @ {baudrate}")
+    print(f"Captured request seq: 0x{seq:04x}; flags=ACK_AFTER_EXEC")
     if verbose:
         print(f"TX: {packet.hex(' ')}")
 
@@ -1804,55 +1843,134 @@ def run_calibration(port: str, baudrate: int, command_name: str, monitor_seconds
         ser_obj.flush()
 
         reader = FrameReader()
-        first_deadline = time.monotonic() + 3.0
-        got_reply = False
+        started = time.monotonic()
+        end = started + monitor_seconds
+        next_keepalive = started + 2.0
+        last_progress: Optional[bytes] = None
+        progress_count = 0
 
-        for frame in read_frames(ser_obj, reader, first_deadline):
-            if verbose > 1:
-                print(f"RX: {frame.hex}")
-            if not is_gimbal_calib_frame(frame):
+        while time.monotonic() < end:
+            now = time.monotonic()
+            if now >= next_keepalive:
+                ka = build_wm163_gimbal_keepalive_packet()
+                ser_obj.write(ka)
+                ser_obj.flush()
+                if verbose > 1:
+                    print(f"KEEPALIVE TX: {ka.hex(' ')}")
+                next_keepalive = now + (WM163_GIMBAL_KEEPALIVE_INTERVAL_MS / 1000.0)
+
+            waiting = getattr(ser_obj, "in_waiting", 0) or 0
+            chunk = ser_obj.read(waiting if waiting > 0 else 1)
+            if not chunk:
                 continue
-            got_reply = True
-            print(f"Reply: {describe_payload(command_name, frame.payload)}")
-            break
 
-        if not got_reply:
-            print("No matching gimbal-calibration reply was received within 3 seconds.")
-            print("The command may not have reached the gimbal; no calibration result is assumed.")
-            return 3
+            for frame in reader.feed(chunk):
+                if (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_ZENMUSE
+                    and frame.cmd_id == CMD_ID_GIMBAL_AUTO_CAL_STATUS
+                    and len(frame.payload) >= 2
+                ):
+                    progress_count += 1
+                    last_progress = frame.payload
+                    if verbose:
+                        print(f"Progress: {frame.payload[0]}% status={frame.payload[1]}")
+                    if frame.payload[:2] == b"\x64\x00":
+                        print("Result: capture-confirmed phase completion 04/30 64 00.")
+                        return 0
 
-        print("Calibration command was acknowledged at the DUML transport level.")
-        print("Do not move the aircraft while the gimbal is calibrating.")
+        print(f"Observed {progress_count} 04/30 progress packet(s).")
+        if last_progress is not None:
+            print(f"Last progress payload: {last_progress.hex(' ')}")
+        print("Result: phase did not reach capture-confirmed 04/30 64 00 before timeout.")
+        return 4
 
-        end = time.monotonic() + monitor_seconds
-        packet_count = 0
-        legacy_complete = False
-        last_payload: Optional[bytes] = None
 
-        for frame in read_frames(ser_obj, reader, end):
-            if verbose > 1:
-                print(f"RX: {frame.hex}")
-            if not is_gimbal_calib_frame(frame):
-                continue
-            packet_count += 1
-            last_payload = frame.payload
-            desc = describe_payload(command_name, frame.payload)
+
+
+def run_advanced_calibration(
+    port: str,
+    baudrate: int,
+    phase_timeout_seconds: float,
+    verbose: int,
+) -> int:
+    """Capture-backed two-stage WM163 service calibration.
+
+    Keeps one COM session open across Joint Coarse and Linear Hall and sends
+    only the observed GIMBAL 04/12 keepalive. No inferred FLYC keepalive.
+    """
+    if serial is None:
+        print("ERROR: pyserial is required.", file=sys.stderr)
+        return 2
+
+    reader = FrameReader()
+    with serial.Serial(port, baudrate=baudrate, timeout=0.05) as ser_obj:
+        ser_obj.reset_input_buffer()
+        next_keepalive = time.monotonic() + 2.0
+
+        for command_name in ("joint-coarse", "linear-hall"):
+            packet = build_wm163_service_calibration_packet(command_name)
+            ser_obj.write(packet)
+            ser_obj.flush()
+            print(
+                f"{command_name}: sent 04/08 payload "
+                f"{CALIB_COMMANDS[command_name]:02x}"
+            )
             if verbose:
-                print(f"Progress {packet_count}: {desc}")
-            if len(frame.payload) == 2 and tuple(frame.payload) == LEGACY_PASS.get(command_name):
-                legacy_complete = True
-                break
+                print(f"TX: {packet.hex(' ')}")
 
-        print(f"Observed {packet_count} additional gimbal-calibration packet(s).")
-        if legacy_complete:
-            print("Result: calibration reached the legacy completion marker.")
-            return 0
+            deadline = time.monotonic() + phase_timeout_seconds
+            complete = False
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                if now >= next_keepalive:
+                    ka = build_wm163_gimbal_keepalive_packet()
+                    ser_obj.write(ka)
+                    ser_obj.flush()
+                    next_keepalive = now + (WM163_GIMBAL_KEEPALIVE_INTERVAL_MS / 1000.0)
+                    if verbose > 1:
+                        print(f"KEEPALIVE TX: {ka.hex(' ')}")
 
-        if last_payload is not None:
-            print(f"Last observed WM163 payload: {last_payload.hex(' ')}")
-        print("Result: command was accepted, but WM163 completion semantics are not yet fully decoded.")
-        print("Judge the repair by the gimbal's physical centering and a subsequent DJI Fly auto-calibration.")
-        return 0
+                waiting = getattr(ser_obj, "in_waiting", 0) or 0
+                chunk = ser_obj.read(waiting if waiting > 0 else 1)
+                if not chunk:
+                    continue
+                for frame in reader.feed(chunk):
+                    if (
+                        frame.sender == COMM_DEV_GIMBAL
+                        and frame.cmd_set == CMD_SET_ZENMUSE
+                        and frame.cmd_id == CMD_ID_GIMBAL_AUTO_CAL_STATUS
+                        and frame.payload[:2] == b"\x64\x00"
+                    ):
+                        print(f"{command_name}: 04/30 64 00 complete.")
+                        complete = True
+                        break
+                if complete:
+                    break
+
+            if not complete:
+                print(f"FAILED: {command_name} did not reach 04/30 64 00.", file=sys.stderr)
+                return 4
+
+        validation_deadline = time.monotonic() + 10.0
+        while time.monotonic() < validation_deadline:
+            waiting = getattr(ser_obj, "in_waiting", 0) or 0
+            chunk = ser_obj.read(waiting if waiting > 0 else 1)
+            if not chunk:
+                continue
+            for frame in reader.feed(chunk):
+                if (
+                    frame.sender == COMM_DEV_GIMBAL
+                    and frame.cmd_set == CMD_SET_GENERAL
+                    and frame.cmd_id == CMD_ID_GENERAL_PUSH_CHECK_STATUS
+                    and frame.payload[:4] == b"\x00\x00\x00\x00"
+                ):
+                    print("Advanced Calibration validated: 00/F1 = 00 00 00 00.")
+                    return 0
+
+        print("Calibration phases completed, but 00/F1 clear was not observed.", file=sys.stderr)
+        return 5
+
 
 
 def replay_frames(command_name: str, frames: list[str]) -> int:
@@ -1887,14 +2005,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--monitor-seconds",
             type=float,
-            default=45.0 if name == "linear-hall" else 25.0,
-            help="how long to collect calibration status packets",
+            default=120.0,
+            help="how long to wait for capture-confirmed 04/30 64 00 (default: 120)",
         )
         p.add_argument(
             "--yes",
             action="store_true",
             help="required acknowledgement that this is experimental repair software",
         )
+
+    adv = sub.add_parser(
+        "advanced-calibration",
+        help="run capture-backed WM163 Joint Coarse then Linear Hall in one service session",
+    )
+    adv.add_argument("--port", required=True, help="serial port exposed by the aircraft, e.g. COM23")
+    adv.add_argument("--baudrate", type=int, default=9600)
+    adv.add_argument("--phase-timeout-seconds", type=float, default=120.0)
+    adv.add_argument("--yes", action="store_true")
 
     flightlog = sub.add_parser(
         "flightlog-info",
@@ -2061,7 +2188,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         reboot_packet = build_packet(
             seq=(args.seq + 1) & 0xFFFF,
-            payload=b"",
+            payload=WM163_40021_REBOOT_PAYLOAD,
             receiver=COMM_DEV_BATTERY,
             ack_type=ACK_AFTER_EXEC,
             cmd_set=CMD_SET_GENERAL,
@@ -2101,6 +2228,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("WARNING: This starts DJI's normal gimbal Auto Calibration over the COM service link.")
         print("Remove propellers and keep the aircraft stationary on a level surface.")
         return run_auto_cal_capture(args.port, args.baudrate, args.seconds, args.verbose)
+
+    if args.action == "advanced-calibration":
+        if not args.yes:
+            parser.error(
+                "refusing to run WM163 Advanced Calibration without --yes; "
+                "remove propellers and keep the aircraft stationary"
+            )
+        return run_advanced_calibration(
+            args.port,
+            args.baudrate,
+            args.phase_timeout_seconds,
+            args.verbose,
+        )
 
     if args.action == "fix-imu-40021-short":
         if not args.yes:
