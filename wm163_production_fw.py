@@ -19,6 +19,7 @@ from wm163_service_fw_inspect import PackageInfo, inspect_package
 
 EXPECTED_DEVICE = "wm163"
 EXPECTED_FORMAL = "01.00.0500"
+DEFAULT_PRODUCTION_FILENAME = "V01.00.0500_wm163_dji_system.bin"
 EXPECTED_ARCHIVE_SIZE = 53_329_920
 EXPECTED_ARCHIVE_MD5 = "1ab6fa851af2afb3a9faeddd0ff093b3"
 EXPECTED_ARCHIVE_SHA256 = "38f654fb8b60c4c7c2d28afccddfd131228dc8a2a42df65b54a4cd2d65666a0e"
@@ -90,6 +91,20 @@ def validate_production_info(
         )
 
     return info
+
+
+def find_repo_production_archive(
+    base_dir: str | pathlib.Path | None = None,
+) -> pathlib.Path | None:
+    """Return the repo-local verified-production candidate when present.
+
+    This only locates the canonical firmware path; callers must still run
+    validate_production_archive() before treating the file as verified.
+    """
+
+    root = pathlib.Path(base_dir) if base_dir is not None else pathlib.Path(__file__).resolve().parent
+    candidate = root / "firmware" / DEFAULT_PRODUCTION_FILENAME
+    return candidate if candidate.is_file() else None
 
 
 def validate_production_archive(path: str | pathlib.Path) -> PackageInfo:
