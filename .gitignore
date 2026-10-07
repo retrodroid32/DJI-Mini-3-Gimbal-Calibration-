@@ -10,3 +10,4 @@ build/
 
 # Private/local WM163 service firmware
 private_firmware/
+wm163_service_flash_trace.csv
