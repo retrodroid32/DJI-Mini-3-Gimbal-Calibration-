@@ -507,3 +507,24 @@ GIMBAL 04/12 packet with payload:
 ```text
 E6 01 43 00 00 00 00 00 00 00 00 08
 ```
+
+
+## 40021 capture validator — PASS
+
+The genuine Dr.Grey capture was validated offline with
+`validate_wm163_40021_capture.py`.
+
+Observed:
+
+```text
+WM163 Dr.Grey 40021 short repair: PASS
+DUML frames found: 161649
+04/36 request seq: 0x0064
+04/36 -> empty ACK: 186.697 ms
+04/36 -> battery/PMU reboot TX: 1644.177 ms
+reboot TX -> status-00 ACK: 9.217 ms
+OFFLINE ONLY: no serial port was opened.
+```
+
+This independently confirms the short WM163 40021 repair sequence and its
+required empty ACK before reboot.
