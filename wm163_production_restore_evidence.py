@@ -12,6 +12,7 @@ Recovered from DrGrey's compiled mini2style_flash implementation:
 - surrounding control commands are 0x07 ENTER, 0x08 REPORT SIZE and 0x0A FINALIZE;
 - request flags include 0x40;
 - FINALIZE is 17 zero bytes;
+- its own packet sequence state starts at 0 and increments modulo 16 bits;
 - the normal updater monitors install-state push 0x42 after verification.
 
 Those payload builders are byte-equivalent to the capture-backed WM163
@@ -43,8 +44,21 @@ MINI2STYLE_TRANSFER_CMD = 0x2A
 MINI2STYLE_FINALIZE_CMD = 0x0A
 MINI2STYLE_REQUEST_FLAGS = 0x40
 MINI2STYLE_INSTALL_PUSH_CMD = 0x42
+MINI2STYLE_SEQ0 = 0
+MINI2STYLE_SEQ_MASK = 0xFFFF
 MINI2STYLE_REPORT_SELECTOR = b"\x01\x02"
 MINI2STYLE_FINALIZE_PAYLOAD = b"\x00" * 17
+
+
+def mini2style_next_seq(current: int) -> tuple[int, int]:
+    """Recovered native Flasher._next() behavior.
+
+    The generic updater initializes its sequence state to 0, returns the current
+    value, then stores (current + 1) & 0xFFFF.
+    """
+    if not 0 <= current <= MINI2STYLE_SEQ_MASK:
+        raise ValueError("current sequence must fit uint16")
+    return current, (current + 1) & MINI2STYLE_SEQ_MASK
 
 
 def build_mini2style_report_size(total_size: int) -> bytes:
