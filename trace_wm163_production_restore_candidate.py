@@ -36,6 +36,13 @@ from wm163_service_flash_protocol import (
     session_b_total_size,
 )
 
+KNOWN_PRODUCTION_CANDIDATE_PACKET_COUNT = 54_424
+KNOWN_PRODUCTION_CANDIDATE_SEQUENCE_WRAPS = 1
+KNOWN_PRODUCTION_CANDIDATE_FINALIZE_SEQ = 0x04C0
+KNOWN_PRODUCTION_CANDIDATE_STREAM_SHA256 = (
+    "6da89763feb71e837d066ad176b041a9e510c69c49525d2a4cd17863800ce6b8"
+)
+
 
 def summarize(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str, object]:
     production_fw.validate_production_archive(package_path)
@@ -100,6 +107,30 @@ def summarize(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str
 
     finalize_seq = seq
     emit(CMD_FINALIZE, session_b_finalize_payload(), "FINALIZE")
+    stream_sha256 = sha.hexdigest()
+
+    if packet_count != KNOWN_PRODUCTION_CANDIDATE_PACKET_COUNT:
+        raise ValueError(
+            "production candidate packet-count mismatch: "
+            f"expected {KNOWN_PRODUCTION_CANDIDATE_PACKET_COUNT}, got {packet_count}"
+        )
+    if wraps != KNOWN_PRODUCTION_CANDIDATE_SEQUENCE_WRAPS:
+        raise ValueError(
+            "production candidate sequence-wrap mismatch: "
+            f"expected {KNOWN_PRODUCTION_CANDIDATE_SEQUENCE_WRAPS}, got {wraps}"
+        )
+    if finalize_seq != KNOWN_PRODUCTION_CANDIDATE_FINALIZE_SEQ:
+        raise ValueError(
+            "production candidate final-sequence mismatch: "
+            f"expected 0x{KNOWN_PRODUCTION_CANDIDATE_FINALIZE_SEQ:04X}, "
+            f"got 0x{finalize_seq:04X}"
+        )
+    if stream_sha256 != KNOWN_PRODUCTION_CANDIDATE_STREAM_SHA256:
+        raise ValueError(
+            "production candidate stream SHA256 mismatch: "
+            f"expected {KNOWN_PRODUCTION_CANDIDATE_STREAM_SHA256}, "
+            f"got {stream_sha256}"
+        )
 
     return {
         "file_count": len(files),
@@ -107,7 +138,7 @@ def summarize(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str
         "packet_count_including_finalize": packet_count,
         "sequence_wraps_before_or_at_finalize": wraps,
         "finalize_seq": finalize_seq,
-        "stream_sha256": sha.hexdigest(),
+        "stream_sha256": stream_sha256,
         "boundary": tuple(boundary),
     }
 
