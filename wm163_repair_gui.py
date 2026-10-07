@@ -618,7 +618,7 @@ class WM163RepairGUI:
 
         self.restore_fw_btn = ttk.Button(
             actions,
-            text="Restore Current FW  —  NOT IMPLEMENTED",
+            text="Restore Production FW  —  LOCKED (protocol unproven)",
             style="Locked.TButton",
             state="disabled",
         )
@@ -628,9 +628,10 @@ class WM163RepairGUI:
             body,
             text=(
                 "Service FW live mode is still hard-disabled in wm163_service_flash_live.py. "
-                "The DJI Assistant production cache finder is read-only. Production "
-                "firmware restore will remain disabled until its package/cache format and "
-                "live restore sequence are independently validated."
+                "The exact WM163 v01.00.0500 production archive and its offline "
+                "Session-B candidate stream are validated. Production restore remains "
+                "disabled because the live restore handshake/finalize/commit sequence "
+                "has not yet been independently captured or proven."
             ),
             style="Locked.TLabel",
             wraplength=1050,
