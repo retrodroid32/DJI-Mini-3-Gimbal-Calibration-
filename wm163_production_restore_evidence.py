@@ -8,6 +8,9 @@ Recovered from DrGrey's compiled mini2style_flash implementation:
 - signed-file records use 01 START / 02 DATA / 03 END;
 - DATA carries a little-endian uint32 chunk index;
 - END carries the supplied 16-byte MD5 digest;
+- file START/DATA/END records are carried under command 0x2A;
+- surrounding control commands are 0x07 ENTER, 0x08 REPORT SIZE and 0x0A FINALIZE;
+- request flags include 0x40;
 - FINALIZE is 17 zero bytes;
 - the normal updater monitors install-state push 0x42 after verification.
 
@@ -34,9 +37,14 @@ class EvidenceLevel(str, Enum):
     UNPROVEN = "unproven"
 
 
+MINI2STYLE_ENTER_CMD = 0x07
+MINI2STYLE_REPORT_SIZE_CMD = 0x08
+MINI2STYLE_TRANSFER_CMD = 0x2A
+MINI2STYLE_FINALIZE_CMD = 0x0A
+MINI2STYLE_REQUEST_FLAGS = 0x40
+MINI2STYLE_INSTALL_PUSH_CMD = 0x42
 MINI2STYLE_REPORT_SELECTOR = b"\x01\x02"
 MINI2STYLE_FINALIZE_PAYLOAD = b"\x00" * 17
-MINI2STYLE_INSTALL_PUSH_CMD = 0x42
 
 
 def build_mini2style_report_size(total_size: int) -> bytes:
@@ -97,8 +105,9 @@ EVIDENCE = (
         "Generic DJI signed-file payload grammar",
         EvidenceLevel.BINARY_RECOVERED,
         (
-            "DrGrey mini2style_flash independently uses the same 01/02/03 "
-            "file-record grammar, 01 02 report selector, and 17-zero FINALIZE."
+            "DrGrey mini2style_flash independently uses command 0x2A with the "
+            "same 01/02/03 file-record grammar, 01 02 report selector, and "
+            "17-zero FINALIZE; surrounding controls are 0x07/0x08/0x0A."
         ),
     ),
     RestoreEvidence(
