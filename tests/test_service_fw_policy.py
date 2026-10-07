@@ -128,7 +128,7 @@ def test_live_wm163_v30_preflight_matches_aircraft_state():
         diagnostic_40021_active=False,
     )
     assert ok
-    assert "40021 is clear" in reasons
+    assert any("40021 is clear" in r for r in reasons)
     assert "40011 is active" in reasons
 
 
@@ -145,4 +145,22 @@ def test_live_wm163_v30_preflight_fails_closed():
     assert not ok
     assert any("wrong aircraft device" in r for r in reasons)
     assert any("ARB blocks" in r for r in reasons)
-    assert any("40021 is active again" in r for r in reasons)
+    assert any("unexpected aircraft antirollback" in r for r in reasons)
+    assert any("40011 is not currently active" in r for r in reasons)
+    assert not any("40021" in r and "block" in r.lower() for r in reasons)
+
+
+def test_live_wm163_v30_preflight_allows_combined_40011_40021():
+    from wm163_service_fw_policy import evaluate_wm163_v30_preflight
+
+    ok, reasons = evaluate_wm163_v30_preflight(
+        aircraft_device="wm163",
+        aircraft_formal="01.00.0500",
+        aircraft_antirollback="0",
+        diagnostic_40011_active=True,
+        diagnostic_40021_active=True,
+    )
+    assert ok
+    assert any("combined repair is allowed" in r for r in reasons)
+    assert any("after Advanced Calibration" in r for r in reasons)
+    assert "40011 is active" in reasons
