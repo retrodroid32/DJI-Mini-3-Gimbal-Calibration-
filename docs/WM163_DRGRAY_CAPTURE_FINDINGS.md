@@ -345,3 +345,66 @@ followed by USB shutdown/disconnect activity several seconds later.
 
 These observations must be incorporated into the live orchestration model
 before live flashing can be considered.
+
+
+## Compiled Session-B transport probe — confirmed
+
+Offline execution of the recovered CPython 3.14
+`drgrey.transport.SerialTransport` against a fake serial backend established
+the remaining Session-B transport behavior.
+
+### send_and_collect(window_ms=0, read_timeout_ms=1)
+
+With or without an immediately available response, the compiled helper did:
+
+```text
+write(packet)
+flush()
+return []
+```
+
+There was:
+
+- no reset_input_buffer()
+- no read()
+- no response collection when window_ms=0
+
+This is the path used by recovered `EngineTransport.write()` for Session-B
+0x2A streaming records.
+
+Therefore Session-B streaming must not use the Session-A gray-flasher
+reset-before-write path.
+
+### read_burst(budget_ms=120, read_timeout_ms=40)
+
+With four bytes preloaded, the compiled helper performed:
+
+```text
+read(4096) timeout=0.040 -> 4 bytes
+read(4096) timeout=0.040 -> empty
+return [4-byte chunk]
+```
+
+With no data and `budget_ms=5, read_timeout_ms=1`:
+
+```text
+read(4096) timeout=0.001 -> empty
+return []
+```
+
+Thus read_burst performs blocking reads and terminates on the first empty read;
+the nominal budget is an overall bound, not a requirement to remain in the
+loop for the entire budget.
+
+### Project transport model after probe
+
+The project now keeps three distinct operations:
+
+1. gray/control xfer: reset RX -> write -> collect immediate response
+2. Session-B stream write: write -> flush only
+3. drain/read_burst: blocking reads until first empty read
+
+The captured `F7` result remains accepted only for WM163 Session-B FINALIZE.
+Generic control status acceptance remains unchanged.
+
+Live flashing remains disabled.
