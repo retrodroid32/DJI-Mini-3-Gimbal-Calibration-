@@ -528,3 +528,61 @@ OFFLINE ONLY: no serial port was opened.
 
 This independently confirms the short WM163 40021 repair sequence and its
 required empty ACK before reboot.
+
+
+## Capture-backed project packet builders
+
+A final gap review found two additional mismatches in the project's older live
+calibration/repair helpers and corrected them.
+
+### Advanced Calibration request behavior
+
+The genuine capture shows:
+
+```text
+Joint Coarse
+seq=0x0062
+flags=0x40 (ACK_AFTER_EXEC)
+04/08 payload 01
+
+Linear Hall
+seq=0x0063
+flags=0x40 (ACK_AFTER_EXEC)
+04/08 payload 02
+```
+
+No sequence-matched 04/08 response is required by the genuine run. Progress is
+reported asynchronously via 04/30, and phase completion is 64 00.
+
+The project now models this behavior and maintains the capture-confirmed 04/12
+gimbal keepalive while waiting for phase completion.
+
+### 40021 reboot correction
+
+The genuine post-04/36 reboot packet is:
+
+```text
+55 1b 04 75 2a 0b 65 00 40 00 0b
+00 01 00 00 00 00 00 00 00 00 00 00 00 00
+18 41
+```
+
+Important details:
+
+- seq = 0x0065
+- raw source byte = 0x2A (PC sender index 1)
+- dst = 0x0B battery/PMU
+- flags = 0x40
+- cmdset/cmd = 00/0B
+- payload is 14 bytes, not empty
+
+The project previously used an empty reboot payload and normal PC sender index
+0; both are now corrected.
+
+Byte-for-byte regression tests now cover:
+
+1. Joint Coarse request
+2. Linear Hall request
+3. 04/12 gimbal keepalive
+4. short 40021 04/36 request
+5. battery/PMU reboot
