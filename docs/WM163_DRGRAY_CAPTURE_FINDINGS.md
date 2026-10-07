@@ -408,3 +408,38 @@ The captured `F7` result remains accepted only for WM163 Session-B FINALIZE.
 Generic control status acceptance remains unchanged.
 
 Live flashing remains disabled.
+
+
+## Offline state-machine validator — PASS
+
+The genuine Dr.Grey USBPcap capture was validated by
+`validate_wm163_service_state_machine.py`.
+
+Observed result:
+
+```text
+WM163 Dr.Grey service-flash state machine: PASS
+DUML frames found: 161649
+A/CMD_0B -> ACK: 0.571 ms
+A/CMD_0B -> loader probe: 1.977 ms
+A/CMD_0B -> WM163 UAV response: 14.828 ms
+A/CMD_0B -> B/ENTER: 57.809 ms
+Session B ENTER -> FINALIZE: 54.438 s
+B/FINALIZE -> F7 ACK: 1.576 ms
+B/FINALIZE -> first commit probe: 19.537 ms
+Commit probes / loader responses: 113 / 112
+Commit-probe median interval: 0.512 s
+Last good WM163 UAV response: +58.405 s
+Last probe: +58.907 s
+OFFLINE ONLY: no serial port was opened.
+```
+
+This confirms the capture-backed Service-FW control/state sequence from
+A/CMD_0B through temporary-loader activation, Session B, F7 finalization, and
+post-finalize commit monitoring.
+
+Packet-byte parity and state-machine validation are now both established for
+the captured genuine Dr.Grey Service-FW run.
+
+Live flashing remains disabled pending review of the remaining calibration
+workflow and any uncaptured runtime assumptions.
