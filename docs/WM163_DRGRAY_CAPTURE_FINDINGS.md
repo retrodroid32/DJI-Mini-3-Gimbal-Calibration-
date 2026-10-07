@@ -693,3 +693,36 @@ It has **not yet completed a successful live hardware run from this project**.
 
 Live Service-FW remains deliberately interlocked until an explicit decision is
 made to perform that hardware-validation step.
+
+
+## Recommended repair order for 40011 and 40021
+
+The genuine Dr.Grey WM163 capture establishes the combined repair order:
+
+```text
+1. Read/diagnose current gimbal errors
+2. Load WM163 Service Firmware
+3. Run Advanced Calibration
+   - 04/08 01 Joint Coarse
+   - 04/08 02 Linear Hall
+   - verify 00/F1 clears to 00 00 00 00
+4. Run short 40021 repair if 40021 is active
+   - 04/36 payload 42 E9 7F 3F
+   - require empty ACK
+   - reboot battery/PMU
+5. Reconnect and verify both errors are gone
+```
+
+Dependency rule:
+
+- **40011 requires Service Firmware before Advanced Calibration.**
+- **40021 does not require Service Firmware.** It is an independent short
+  IMU repair and can be performed directly when 40021 is active.
+
+Therefore, for a 40021-only aircraft the shortened workflow is:
+
+```text
+Diagnose -> Fix 40021 -> reboot -> verify
+```
+
+For an aircraft with both 40011 and 40021, use the full captured order above.
