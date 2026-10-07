@@ -633,3 +633,63 @@ remain treated as capture-verified research/repair tooling until its own live
 path is deliberately hardware-validated.
 
 Service-FW live mode remains hard-disabled.
+
+
+## Actual live-path offline replay — PASS
+
+The project's real Service-FW orchestration functions were executed end-to-end
+against a fake serial device backed by the genuine Dr.Grey USBPcap capture.
+
+Executed code paths:
+
+```text
+run_session_a()
+wait_for_temp_loader()
+run_session_b()
+hold_for_commit()
+```
+
+Result:
+
+```text
+WM163 actual live-path replay: PASS
+Total generated writes: 53968
+Captured service requests matched: 53942
+Known USBPcap omission ranges replayed:
+  0x7660-0x766C
+  0xB960-0xB96C
+Captured post-finalize WM163 UAV responses replayed: 112
+Final unanswered commit probe -> synthetic transport disconnect: PASS
+OFFLINE ONLY: no serial port was opened.
+```
+
+This is stronger than packet-file parity alone because the replay exercised the
+same orchestration functions that would be used by the live Service-FW path,
+including:
+
+- Session-A control/stream ACK handling
+- A/CMD_0B transition
+- temporary-loader detection
+- Session-B stream behavior
+- B/FINALIZE F7 acceptance
+- post-finalize commit polling
+- final loader disappearance / transport transition
+
+The two 13-packet gaps are the same previously identified USBPcap omissions.
+The generated packets spanning those ranges are already covered by the
+byte-for-byte offline trace and sequence invariants.
+
+### Validation boundary
+
+The Service-FW implementation is now:
+
+- package/hash validated
+- packet-byte validated
+- state-machine validated
+- transport-helper validated
+- actual live-path offline replay validated
+
+It has **not yet completed a successful live hardware run from this project**.
+
+Live Service-FW remains deliberately interlocked until an explicit decision is
+made to perform that hardware-validation step.
