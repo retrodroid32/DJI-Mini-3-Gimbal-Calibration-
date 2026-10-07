@@ -255,8 +255,41 @@ class WM163RepairGUI:
         main.columnconfigure(1, weight=6)
         main.rowconfigure(0, weight=1)
 
-        left = ttk.Frame(main)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        # Left repair workflow gets its own vertical scroll area so Steps 4/5
+        # and Basic Calibration remain reachable on 768/900-pixel desktops.
+        left_host = ttk.Frame(main)
+        left_host.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        left_canvas = tk.Canvas(
+            left_host,
+            bg=BG,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        left_scroll = ttk.Scrollbar(left_host, orient="vertical", command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_scroll.pack(side="right", fill="y")
+        left_canvas.pack(side="left", fill="both", expand=True)
+
+        left = ttk.Frame(left_canvas)
+        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
+
+        def sync_left_region(_event=None):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+
+        def sync_left_width(event):
+            left_canvas.itemconfigure(left_window, width=event.width)
+
+        left.bind("<Configure>", sync_left_region)
+        left_canvas.bind("<Configure>", sync_left_width)
+
+        def left_mousewheel(event):
+            delta = -1 if event.delta > 0 else 1
+            left_canvas.yview_scroll(delta * 3, "units")
+            return "break"
+
+        left_canvas.bind("<Enter>", lambda _e: left_canvas.bind_all("<MouseWheel>", left_mousewheel))
+        left_canvas.bind("<Leave>", lambda _e: left_canvas.unbind_all("<MouseWheel>"))
+
         right = ttk.Frame(main)
         right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
