@@ -119,7 +119,7 @@ class WM163RepairGUI:
         self._build_ui()
         self.refresh_ports()
         self.root.after(75, self._drain_events)
-        self.root.after(700, self._auto_find_assistant_firmware_silent)
+        self.root.after(700, self._auto_find_production_firmware_silent)
 
     # ---------- styling ----------
 
@@ -565,7 +565,7 @@ class WM163RepairGUI:
         ttk.Button(
             production_buttons,
             text="Auto Find",
-            command=self.auto_find_assistant_firmware,
+            command=self.auto_find_production_firmware,
         ).pack(side="left", padx=(0, 4))
         ttk.Button(
             production_buttons,
@@ -935,13 +935,31 @@ class WM163RepairGUI:
         if path:
             self.service_loader_path.set(path)
 
-    def _auto_find_assistant_firmware_silent(self) -> None:
-        # Startup convenience: search quietly once. The user can always press
-        # Auto Find again after DJI Assistant downloads/refreshes firmware.
+    def _auto_find_production_firmware_silent(self) -> None:
+        # Startup convenience: prefer the exact repo-local production archive
+        # when it exists; otherwise fall back to DJI Assistant cache discovery.
         if self.busy:
-            self.root.after(1000, self._auto_find_assistant_firmware_silent)
+            self.root.after(1000, self._auto_find_production_firmware_silent)
             return
-        self.auto_find_assistant_firmware(silent=True)
+        self.auto_find_production_firmware(silent=True)
+
+    def auto_find_production_firmware(self, silent: bool = False) -> None:
+        repo_package = production_fw.find_repo_production_archive(
+            pathlib.Path(__file__).resolve().parent
+        )
+        if repo_package is not None:
+            self.production_package_path.set(str(repo_package))
+            self.flash_vars["Selected File"].set(repo_package.name)
+            self.flash_vars["Production FW"].set(
+                "01.00.0500 — repo archive, validation pending"
+            )
+            self._append_log(
+                f"Found repo-local WM163 production firmware: {repo_package}\n"
+            )
+            self.validate_production_fw()
+            return
+
+        self.auto_find_assistant_firmware(silent=silent)
 
     def auto_find_assistant_firmware(self, silent: bool = False) -> None:
         def task():
