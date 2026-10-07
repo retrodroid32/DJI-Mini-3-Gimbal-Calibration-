@@ -7,9 +7,11 @@ from wm163_production_fw import (
     EXPECTED_ARCHIVE_SHA256,
     EXPECTED_ARCHIVE_SIZE,
     EXPECTED_DEVICE,
+    DEFAULT_PRODUCTION_FILENAME,
     EXPECTED_ENFORCE,
     EXPECTED_FORMAL,
     EXPECTED_MODULE_VERSIONS,
+    find_repo_production_archive,
     validate_production_info,
 )
 from wm163_service_fw_inspect import ModuleInfo, PackageInfo
@@ -91,3 +93,16 @@ def test_rejects_wrong_module_version_set():
             _known_info(modules=tuple(modules)),
             archive_size=EXPECTED_ARCHIVE_SIZE,
         )
+
+
+def test_finds_repo_local_production_archive(tmp_path):
+    firmware = tmp_path / "firmware"
+    firmware.mkdir()
+    expected = firmware / DEFAULT_PRODUCTION_FILENAME
+    expected.write_bytes(b"placeholder")
+
+    assert find_repo_production_archive(tmp_path) == expected
+
+
+def test_repo_local_production_archive_is_optional(tmp_path):
+    assert find_repo_production_archive(tmp_path) is None
