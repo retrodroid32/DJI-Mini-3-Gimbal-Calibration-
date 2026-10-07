@@ -388,6 +388,36 @@ def build_airforge_flyc_keepalive_packet() -> bytes:
     )
 
 
+def build_wm163_40021_fix_packet(seq: int = WM163_40021_FIX_SEQ) -> bytes:
+    """Build exact capture-confirmed WM163 short 40021 04/36 request."""
+    return build_packet(
+        seq=seq,
+        payload=IMU_FIX_SHORT_PAYLOAD,
+        sender=COMM_DEV_PC,
+        sender_index=0,
+        receiver=COMM_DEV_GIMBAL,
+        receiver_index=0,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_ZENMUSE,
+        cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
+    )
+
+
+def build_wm163_40021_reboot_packet(seq: int = WM163_40021_REBOOT_SEQ) -> bytes:
+    """Build exact capture-confirmed battery/PMU reboot following short 40021 fix."""
+    return build_packet(
+        seq=seq,
+        payload=WM163_40021_REBOOT_PAYLOAD,
+        sender=COMM_DEV_PC,
+        sender_index=1,
+        receiver=COMM_DEV_BATTERY,
+        receiver_index=0,
+        ack_type=ACK_AFTER_EXEC,
+        cmd_set=CMD_SET_GENERAL,
+        cmd_id=CMD_ID_GENERAL_REBOOT,
+    )
+
+
 def build_wm163_gimbal_keepalive_packet(seq: int = WM163_GIMBAL_KEEPALIVE_SEQ) -> bytes:
     """Exact recovered WM163 GIMBAL 0x04/0x12 keepalive builder."""
     return build_packet(
@@ -1553,14 +1583,7 @@ def run_fix_imu_40021_short(
                 return 7
 
             seq = WM163_40021_FIX_SEQ
-            fix_packet = build_packet(
-                seq=seq,
-                payload=IMU_FIX_SHORT_PAYLOAD,
-                receiver=COMM_DEV_GIMBAL,
-                ack_type=ACK_AFTER_EXEC,
-                cmd_set=CMD_SET_ZENMUSE,
-                cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
-            )
+            fix_packet = build_wm163_40021_fix_packet(seq)
             if verbose:
                 print(f"FIX TX: {fix_packet.hex(' ')}")
             ser_obj.write(fix_packet)
@@ -1596,14 +1619,7 @@ def run_fix_imu_40021_short(
 
             time.sleep(WM163_40021_REBOOT_DELAY_SECONDS)
             reboot_seq = WM163_40021_REBOOT_SEQ
-            reboot_packet = build_packet(
-                seq=reboot_seq,
-                payload=WM163_40021_REBOOT_PAYLOAD,
-                receiver=COMM_DEV_BATTERY,
-                ack_type=ACK_AFTER_EXEC,
-                cmd_set=CMD_SET_GENERAL,
-                cmd_id=CMD_ID_GENERAL_REBOOT,
-            )
+            reboot_packet = build_wm163_40021_reboot_packet(reboot_seq)
             if verbose:
                 print(f"REBOOT TX: {reboot_packet.hex(' ')}")
 
@@ -2178,22 +2194,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return replay_frames(args.command, args.frames)
 
     if args.action == "dry-run-40021":
-        fix_packet = build_packet(
-            seq=args.seq,
-            payload=IMU_FIX_SHORT_PAYLOAD,
-            receiver=COMM_DEV_GIMBAL,
-            ack_type=ACK_AFTER_EXEC,
-            cmd_set=CMD_SET_ZENMUSE,
-            cmd_id=CMD_ID_GIMBAL_WRITE_IMU,
-        )
-        reboot_packet = build_packet(
-            seq=(args.seq + 1) & 0xFFFF,
-            payload=WM163_40021_REBOOT_PAYLOAD,
-            receiver=COMM_DEV_BATTERY,
-            ack_type=ACK_AFTER_EXEC,
-            cmd_set=CMD_SET_GENERAL,
-            cmd_id=CMD_ID_GENERAL_REBOOT,
-        )
+        fix_packet = build_wm163_40021_fix_packet(args.seq)
+        reboot_packet = build_wm163_40021_reboot_packet((args.seq + 1) & 0xFFFF)
         print(f"FIX:    {fix_packet.hex(' ')}")
         print(f"REBOOT: {reboot_packet.hex(' ')}")
         return 0
