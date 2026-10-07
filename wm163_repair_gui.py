@@ -32,6 +32,7 @@ import wm163_service_flash_live as service_fw
 import wm163_assistant_cache as assistant_cache
 import wm163_private_fw as private_fw
 import wm163_production_fw as production_fw
+import wm163_live_preflight as live_preflight
 from wm163_service_fw_inspect import inspect_package
 
 try:
@@ -591,6 +592,14 @@ class WM163RepairGUI:
         )
         validate_production_btn.grid(row=4, column=0, columnspan=3, sticky="ew", pady=3)
         self.action_buttons.append(validate_production_btn)
+
+        live_preflight_btn = ttk.Button(
+            files,
+            text="Run READ-ONLY Live Preflight",
+            command=self.run_live_preflight,
+        )
+        live_preflight_btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(3, 8))
+        self.action_buttons.append(live_preflight_btn)
 
         progress_outer, progress_body = self._panel(body, "Flash Progress")
         progress_outer.pack(fill="x", pady=8)
@@ -1246,6 +1255,46 @@ class WM163RepairGUI:
                 self.flash_vars["Service FW"].set("30.00.0100 — INVALID")
 
         self._run_task("Validate Service Firmware", task, done)
+
+    def run_live_preflight(self) -> None:
+        if not self._require_connection():
+            return
+
+        port = self._port()
+        self.flash_progress["value"] = 0
+        self.flash_progress_label.configure(
+            text="Running READ-ONLY WM163 live preflight..."
+        )
+
+        def task():
+            return live_preflight.run(
+                port,
+                baudrate=9600,
+                manifest_timeout_seconds=3.0,
+                diagnostic_seconds=5.0,
+                base_dir=pathlib.Path(__file__).resolve().parent,
+            )
+
+        def done(rc, _output):
+            if rc == 0:
+                self.flash_progress["value"] = 100
+                self.flash_progress_label.configure(
+                    text=(
+                        "READ-ONLY preflight PASS. Service-FW flashing remains "
+                        "locked pending explicit hardware-validation approval."
+                    )
+                )
+                self.flash_vars["Validation"].set("PREFLIGHT PASS — READ ONLY")
+            else:
+                self.flash_progress["value"] = 0
+                self.flash_progress_label.configure(
+                    text=f"READ-ONLY preflight BLOCKED (rc={rc})."
+                )
+                self.flash_vars["Validation"].set(
+                    f"PREFLIGHT BLOCKED — rc={rc}"
+                )
+
+        self._run_task("READ-ONLY Live Preflight", task, done)
 
     # ---------- repair actions ----------
 
