@@ -2,6 +2,11 @@ import hashlib
 
 from wm163_production_restore_evidence import (
     EvidenceLevel,
+    MINI2STYLE_ENTER_CMD,
+    MINI2STYLE_REPORT_SIZE_CMD,
+    MINI2STYLE_TRANSFER_CMD,
+    MINI2STYLE_FINALIZE_CMD,
+    MINI2STYLE_REQUEST_FLAGS,
     MINI2STYLE_FINALIZE_PAYLOAD,
     MINI2STYLE_INSTALL_PUSH_CMD,
     build_mini2style_chunk,
@@ -57,3 +62,16 @@ def test_evidence_model_does_not_promote_stock_restore_to_proven():
     stock = next(x for x in EVIDENCE if x.subject == "WM163 stock-restore outer orchestration")
     assert stock.level is EvidenceLevel.UNPROVEN
     assert MINI2STYLE_INSTALL_PUSH_CMD == 0x42
+
+
+def test_recovered_mini2style_outer_command_mapping():
+    assert MINI2STYLE_ENTER_CMD == 0x07
+    assert MINI2STYLE_REPORT_SIZE_CMD == 0x08
+    assert MINI2STYLE_TRANSFER_CMD == 0x2A
+    assert MINI2STYLE_FINALIZE_CMD == 0x0A
+    assert MINI2STYLE_REQUEST_FLAGS == 0x40
+    assert MINI2STYLE_INSTALL_PUSH_CMD == 0x42
+
+    # Important correction: DrGrey's signed-file stream is its custom 0x2A
+    # record transport, not the generic General 0x09 command.
+    assert MINI2STYLE_TRANSFER_CMD != 0x09
