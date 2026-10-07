@@ -9,6 +9,9 @@ from wm163_production_restore_evidence import (
     MINI2STYLE_REQUEST_FLAGS,
     MINI2STYLE_FINALIZE_PAYLOAD,
     MINI2STYLE_INSTALL_PUSH_CMD,
+    MINI2STYLE_SEQ0,
+    MINI2STYLE_SEQ_MASK,
+    mini2style_next_seq,
     build_mini2style_chunk,
     build_mini2style_file_end,
     build_mini2style_file_start,
@@ -75,3 +78,20 @@ def test_recovered_mini2style_outer_command_mapping():
     # Important correction: DrGrey's signed-file stream is its custom 0x2A
     # record transport, not the generic General 0x09 command.
     assert MINI2STYLE_TRANSFER_CMD != 0x09
+
+
+def test_recovered_mini2style_sequence_counter():
+    assert MINI2STYLE_SEQ0 == 0
+    assert MINI2STYLE_SEQ_MASK == 0xFFFF
+
+    emitted, next_seq = mini2style_next_seq(MINI2STYLE_SEQ0)
+    assert emitted == 0x0000
+    assert next_seq == 0x0001
+
+    emitted, next_seq = mini2style_next_seq(0xFFFE)
+    assert emitted == 0xFFFE
+    assert next_seq == 0xFFFF
+
+    emitted, next_seq = mini2style_next_seq(0xFFFF)
+    assert emitted == 0xFFFF
+    assert next_seq == 0x0000
