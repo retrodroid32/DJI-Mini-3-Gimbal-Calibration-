@@ -7,3 +7,6 @@ dist/
 build/
 *.egg-info/
 *.log
+
+# Private/local WM163 service firmware
+private_firmware/
