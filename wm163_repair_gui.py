@@ -240,7 +240,7 @@ class WM163RepairGUI:
 
         self.repair_tab = ttk.Frame(self.notebook)
         self.flash_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.repair_tab, text="Repair & Calibration")
+        self.notebook.add(self.repair_tab, text="Repair Workflow")
         self.notebook.add(self.flash_tab, text="FW Flasher")
 
         self._build_repair_tab()
@@ -260,53 +260,150 @@ class WM163RepairGUI:
         right = ttk.Frame(main)
         right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
-        cal_outer, cal_body = self._panel(left, "Gimbal Calibration")
-        cal_outer.pack(fill="x", pady=(0, 8))
+        workflow_outer, workflow = self._panel(left, "WM163 Repair Workflow")
+        workflow_outer.pack(fill="x", pady=(0, 8))
         ttk.Label(
-            cal_body,
-            text="Remove propellers and keep the aircraft stationary on a level surface.",
-            style="PanelSub.TLabel",
-        ).pack(anchor="w", pady=(0, 7))
-
-        basic_btn = ttk.Button(cal_body, text="Basic Calibration", command=self.basic_calibration)
-        basic_btn.pack(fill="x", pady=3)
-        adv_btn = ttk.Button(
-            cal_body,
-            text="Advanced Calibration  —  clears 40011 after Service FW",
-            command=self.advanced_calibration,
-        )
-        adv_btn.pack(fill="x", pady=3)
-        self.action_buttons.extend([basic_btn, adv_btn])
-
-        diag_outer, diag = self._panel(left, "Diagnostics")
-        diag_outer.pack(fill="x", pady=8)
-        ttk.Label(
-            diag,
-            text="Read-only checks. These actions do not write calibration or firmware.",
-            style="PanelSub.TLabel",
-        ).pack(anchor="w", pady=(0, 7))
-        sensor_btn = ttk.Button(diag, text="Run Sensor / 40011 Diagnostics", command=self.sensor_diagnostics)
-        sensor_btn.pack(fill="x", pady=3)
-        error_btn = ttk.Button(diag, text="Read Gimbal Errors", command=self.read_errors)
-        error_btn.pack(fill="x", pady=3)
-        self.action_buttons.extend([sensor_btn, error_btn])
-
-        fix_outer, fix = self._panel(left, "Gimbal IMU Error 40021")
-        fix_outer.pack(fill="x", pady=8)
-        ttk.Label(
-            fix,
+            workflow,
             text=(
-                "Capture-confirmed short WM163 repair. The write is refused unless "
-                "40021 is currently active; the aircraft reboots after the repair."
+                "For BOTH 40011 + 40021, use the numbered steps below in order. "
+                "40011 requires Service Firmware before Advanced Calibration. "
+                "40021 does NOT require Service Firmware and can be repaired independently."
             ),
             style="PanelSub.TLabel",
-            wraplength=540,
-        ).pack(anchor="w", pady=(0, 7))
-        fix_btn = ttk.Button(fix, text="Fix Gimbal IMU Error (40021)", command=self.fix_40021)
-        fix_btn.pack(fill="x", pady=3)
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Step 1
+        ttk.Label(
+            workflow,
+            text="1. Diagnose current errors",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(2, 2))
+        ttk.Label(
+            workflow,
+            text="Read the current gimbal status first. No firmware or calibration data is written.",
+            style="PanelSub.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 4))
+
+        step1 = ttk.Frame(workflow, style="Panel.TFrame")
+        step1.pack(fill="x", pady=(0, 10))
+        step1.columnconfigure(0, weight=1)
+        step1.columnconfigure(1, weight=1)
+        error_btn = ttk.Button(step1, text="Read Gimbal Errors", command=self.read_errors)
+        error_btn.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        sensor_btn = ttk.Button(step1, text="Run 40011 Sensor Diagnostics", command=self.sensor_diagnostics)
+        sensor_btn.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        self.action_buttons.extend([error_btn, sensor_btn])
+
+        # Step 2
+        ttk.Label(
+            workflow,
+            text="2. Flash Service Firmware  —  REQUIRED for 40011",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(2, 2))
+        ttk.Label(
+            workflow,
+            text=(
+                "Required before the Advanced Calibration that clears 40011. "
+                "Skip this step when repairing 40021 only."
+            ),
+            style="PanelSub.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 4))
+        fw_btn = ttk.Button(
+            workflow,
+            text="Go to FW Flasher  →",
+            command=self.open_fw_flasher,
+        )
+        fw_btn.pack(fill="x", pady=(0, 10))
+
+        # Step 3
+        ttk.Label(
+            workflow,
+            text="3. Advanced Calibration  —  clears 40011",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(2, 2))
+        ttk.Label(
+            workflow,
+            text=(
+                "Run only after the WM163 Service Firmware is active. "
+                "Capture-backed sequence: Joint Coarse → Linear Hall → validation clear."
+            ),
+            style="PanelSub.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 4))
+        adv_btn = ttk.Button(
+            workflow,
+            text="Run Advanced Calibration (40011)",
+            command=self.advanced_calibration,
+        )
+        adv_btn.pack(fill="x", pady=(0, 10))
+        self.action_buttons.append(adv_btn)
+
+        # Step 4
+        ttk.Label(
+            workflow,
+            text="4. Fix 40021 IMU Data Mismatch",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(2, 2))
+        ttk.Label(
+            workflow,
+            text=(
+                "Independent of Service Firmware. The tool first requires 40021 to be active, "
+                "then sends the capture-confirmed short repair and reboots the aircraft."
+            ),
+            style="PanelSub.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 4))
+        fix_btn = ttk.Button(
+            workflow,
+            text="Fix Gimbal IMU Error (40021)",
+            command=self.fix_40021,
+        )
+        fix_btn.pack(fill="x", pady=(0, 10))
         self.action_buttons.append(fix_btn)
 
+        # Step 5
+        ttk.Label(
+            workflow,
+            text="5. Reconnect and verify",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(2, 2))
+        ttk.Label(
+            workflow,
+            text="After the 40021 reboot, reconnect and confirm that neither 40011 nor 40021 remains active.",
+            style="PanelSub.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 4))
+        verify_btn = ttk.Button(
+            workflow,
+            text="Verify Gimbal Errors",
+            command=self.read_errors,
+        )
+        verify_btn.pack(fill="x", pady=(0, 4))
+        self.action_buttons.append(verify_btn)
+
+        basic_outer, basic = self._panel(left, "Basic Calibration — separate from 40011 repair")
+        basic_outer.pack(fill="x", pady=8)
+        ttk.Label(
+            basic,
+            text=(
+                "Normal DJI gimbal auto-calibration. This is not the Service-Firmware "
+                "Advanced Calibration used to clear 40011."
+            ),
+            style="PanelSub.TLabel",
+            wraplength=600,
+        ).pack(anchor="w", pady=(0, 5))
+        basic_btn = ttk.Button(basic, text="Run Basic Calibration", command=self.basic_calibration)
+        basic_btn.pack(fill="x", pady=3)
+        self.action_buttons.append(basic_btn)
+
         self._build_log_panel(right)
+
+    def open_fw_flasher(self) -> None:
+        self.notebook.select(self.flash_tab)
+
 
     # ---------- flasher page ----------
 
@@ -362,7 +459,8 @@ class WM163RepairGUI:
         ttk.Label(
             header,
             text=(
-                "This page intentionally exposes file validation and device checks now. "
+                "Service Firmware is REQUIRED before Advanced Calibration can clear 40011. "
+                "It is NOT required for the independent 40021 short repair. "
                 "Live Service-FW installation stays locked until the first deliberate "
                 "hardware-validation run is approved."
             ),
@@ -865,7 +963,7 @@ class WM163RepairGUI:
         if not messagebox.askyesno(
             "Start Advanced Calibration?",
             "This is the capture-backed two-stage WM163 service calibration used to clear 40011.\n\n"
-            "It should only be run while the aircraft is in the correct Service FW state. "
+            "SERVICE FW MUST ALREADY BE ACTIVE before running this step. "
             "Remove propellers and keep the aircraft stationary.\n\nContinue?",
         ):
             return
