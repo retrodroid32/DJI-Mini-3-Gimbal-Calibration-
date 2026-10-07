@@ -30,6 +30,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import mini3_gimbal_cal as cal
 import wm163_service_flash_live as service_fw
 import wm163_assistant_cache as assistant_cache
+import wm163_private_fw as private_fw
 import wm163_production_fw as production_fw
 from wm163_service_fw_inspect import inspect_package
 
@@ -119,6 +120,7 @@ class WM163RepairGUI:
         self._build_ui()
         self.refresh_ports()
         self.root.after(75, self._drain_events)
+        self.root.after(350, self._auto_find_private_service_firmware_silent)
         self.root.after(700, self._auto_find_production_firmware_silent)
 
     # ---------- styling ----------
@@ -935,6 +937,49 @@ class WM163RepairGUI:
         if path:
             self.service_loader_path.set(path)
 
+    def _auto_find_private_service_firmware_silent(self) -> None:
+        # The service package and loader are intentionally local-only. Their
+        # directory is gitignored, so a clone never receives the private files.
+        if self.busy:
+            self.root.after(1000, self._auto_find_private_service_firmware_silent)
+            return
+
+        found = private_fw.find_private_service_inputs(
+            pathlib.Path(__file__).resolve().parent
+        )
+
+        if found.package is not None:
+            self.service_package_path.set(str(found.package))
+            self.flash_vars["Selected File"].set(found.package.name)
+        if found.loader is not None:
+            self.service_loader_path.set(str(found.loader))
+
+        if found.complete:
+            self.flash_vars["Service FW"].set(
+                "30.00.0100 — private local, validation pending"
+            )
+            self._append_log(
+                f"Found local-only WM163 Service FW: {found.package}\n"
+                f"Found local-only Session-A loader: {found.loader}\n"
+            )
+            self.validate_service_fw()
+        elif found.package is not None or found.loader is not None:
+            missing = []
+            if found.package is None:
+                missing.append(private_fw.SERVICE_PACKAGE_FILENAME)
+            if found.loader is None:
+                missing.append(private_fw.SESSION_A_LOADER_FILENAME)
+            self._append_log(
+                "Private Service FW folder is incomplete; missing: "
+                + ", ".join(missing)
+                + "\n"
+            )
+        else:
+            self._append_log(
+                f"No local Service FW inputs found in {found.directory}. "
+                "Browse remains available.\n"
+            )
+
     def _auto_find_production_firmware_silent(self) -> None:
         # Startup convenience: prefer the exact repo-local production archive
         # when it exists; otherwise fall back to DJI Assistant cache discovery.
@@ -1190,11 +1235,14 @@ class WM163RepairGUI:
                 if sha:
                     self.flash_vars["SHA256"].set(sha.group(1).strip())
                 if formal:
-                    self.flash_vars["Service FW"].set(formal.group(1).strip())
+                    self.flash_vars["Service FW"].set(
+                        f"{formal.group(1).strip()} — exact validated archive"
+                    )
             else:
                 self.flash_progress["value"] = 0
                 self.flash_progress_label.configure(text="Validation FAILED.")
                 self.flash_vars["Validation"].set("FAILED")
+                self.flash_vars["Service FW"].set("30.00.0100 — INVALID")
 
         self._run_task("Validate Service Firmware", task, done)
 
