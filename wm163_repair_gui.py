@@ -10,8 +10,9 @@ Safety boundary:
   explicit confirmations.
 - Live Service-FW flashing remains locked because wm163_service_flash_live.py
   is still deliberately interlocked pending first hardware validation.
-- "Restore Current Firmware" is shown as a workflow placeholder until a
-  capture-backed production-firmware restore path is implemented.
+- Exact WM163 v01.00.0500 production-firmware validation is available offline.
+- "Restore Current Firmware" remains locked until the live production restore
+  sequence is independently validated.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import mini3_gimbal_cal as cal
 import wm163_service_flash_live as service_fw
 import wm163_assistant_cache as assistant_cache
+import wm163_production_fw as production_fw
 from wm163_service_fw_inspect import inspect_package
 
 try:
@@ -567,6 +569,11 @@ class WM163RepairGUI:
         ).pack(side="left", padx=(0, 4))
         ttk.Button(
             production_buttons,
+            text="Browse File…",
+            command=self.choose_production_package,
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            production_buttons,
             text="Browse Folder…",
             command=self.choose_production_cache,
         ).pack(side="left")
@@ -574,6 +581,14 @@ class WM163RepairGUI:
         validate_btn = ttk.Button(files, text="Validate Service Firmware", command=self.validate_service_fw)
         validate_btn.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(9, 3))
         self.action_buttons.append(validate_btn)
+
+        validate_production_btn = ttk.Button(
+            files,
+            text="Validate Production Firmware",
+            command=self.validate_production_fw,
+        )
+        validate_production_btn.grid(row=4, column=0, columnspan=3, sticky="ew", pady=3)
+        self.action_buttons.append(validate_production_btn)
 
         progress_outer, progress_body = self._panel(body, "Flash Progress")
         progress_outer.pack(fill="x", pady=8)
@@ -980,6 +995,16 @@ class WM163RepairGUI:
 
         self._run_task("Auto-find DJI Assistant WM163 Firmware", task, done)
 
+    def choose_production_package(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select verified WM163 v01.00.0500 Production Firmware",
+            filetypes=[("DJI firmware", "*.bin"), ("All files", "*.*")],
+        )
+        if path:
+            self.production_package_path.set(path)
+            self.flash_vars["Selected File"].set(pathlib.Path(path).name)
+            self.flash_vars["Production FW"].set("Selected — validation pending")
+
     def choose_production_cache(self) -> None:
         path = filedialog.askdirectory(
             title="Select DJI Assistant firmware/cache folder"
@@ -1018,6 +1043,78 @@ class WM163RepairGUI:
 
         self._run_task("Inspect DJI Assistant Firmware Folder", task, done)
 
+    def validate_production_fw(self) -> None:
+        package = self.production_package_path.get().strip()
+
+        if not package:
+            self.choose_production_package()
+            package = self.production_package_path.get().strip()
+        if not package:
+            return
+
+        pkg_path = pathlib.Path(package)
+        if not pkg_path.is_file():
+            messagebox.showwarning(
+                "Full production archive required",
+                "Exact v01.00.0500 validation requires the full WM163 .bin archive.\n\n"
+                "The selected path is a folder/module cache. Choose "
+                "V01.00.0500_wm163_dji_system.bin with Browse File.",
+                parent=self.root,
+            )
+            return
+
+        self.flash_progress["value"] = 0
+        self.flash_progress_label.configure(
+            text="Validating exact WM163 v01.00.0500 production archive..."
+        )
+
+        def task():
+            info = production_fw.validate_production_archive(pkg_path)
+            print("WM163 v01.00.0500 Production Firmware validation: PASS")
+            print(f"device={info.device}")
+            print(f"formal={info.formal}")
+            print(f"release={info.release}")
+            print(f"size={pkg_path.stat().st_size}")
+            print(f"md5={info.md5}")
+            print(f"sha256={info.sha256}")
+            print(
+                f"antirollback={info.antirollback} "
+                f"antirollback_ext={info.antirollback_ext} enforce={info.enforce}"
+            )
+            for mod in info.modules:
+                print(f"module={mod.module_id} version={mod.version}")
+            print("No serial port was opened and no firmware was written.")
+            return 0
+
+        def done(rc, output):
+            if rc == 0:
+                self.flash_progress["value"] = 100
+                self.flash_progress_label.configure(
+                    text="Production FW validation PASS. Restore remains locked."
+                )
+                self.flash_vars["Selected File"].set(pkg_path.name)
+                self.flash_vars["Validation"].set(
+                    "PASS — EXACT WM163 v01.00.0500"
+                )
+                self.flash_vars["Production FW"].set("01.00.0500 — exact archive")
+                self.flash_vars["File Size"].set(
+                    f"{pkg_path.stat().st_size:,} bytes"
+                )
+
+                md5 = re.search(r"^md5=(.+)$", output, re.M)
+                sha = re.search(r"^sha256=(.+)$", output, re.M)
+                if md5:
+                    self.flash_vars["MD5"].set(md5.group(1).strip())
+                if sha:
+                    self.flash_vars["SHA256"].set(sha.group(1).strip())
+            else:
+                self.flash_progress["value"] = 0
+                self.flash_progress_label.configure(
+                    text="Production FW validation FAILED."
+                )
+                self.flash_vars["Validation"].set("FAILED — PRODUCTION FW")
+
+        self._run_task("Validate Production Firmware", task, done)
 
     def validate_service_fw(self) -> None:
         package = self.service_package_path.get().strip()
