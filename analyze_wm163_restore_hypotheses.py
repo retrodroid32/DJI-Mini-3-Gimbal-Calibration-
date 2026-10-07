@@ -29,6 +29,12 @@ from wm163_production_restore_evidence import (
     build_mini2style_file_start,
     build_mini2style_report_size,
 )
+KNOWN_PRODUCTION_DATA_RECORDS = 54_407
+KNOWN_PRODUCTION_PAYLOAD_RECORDS = 54_423
+KNOWN_PRODUCTION_PAYLOAD_STREAM_SHA256 = (
+    "2ffd428473db42d75e0c7ee581cbeec964f21874992c5f3c974eed2911564fc0"
+)
+
 from wm163_service_flash_protocol import (
     CHUNK,
     session_b_file_data_payload,
@@ -120,6 +126,27 @@ def main() -> int:
         info = production_fw.validate_production_archive(package)
         files = service_live._package_transfer_files(package)
         result = compare_payload_grammars(files)
+        if result["data_records"] != KNOWN_PRODUCTION_DATA_RECORDS:
+            raise ValueError(
+                "exact production DATA-record invariant failed: "
+                f"expected {KNOWN_PRODUCTION_DATA_RECORDS}, "
+                f"got {result['data_records']}"
+            )
+        if (
+            result["payload_records_including_report_and_finalize"]
+            != KNOWN_PRODUCTION_PAYLOAD_RECORDS
+        ):
+            raise ValueError(
+                "exact production payload-record invariant failed: "
+                f"expected {KNOWN_PRODUCTION_PAYLOAD_RECORDS}, "
+                f"got {result['payload_records_including_report_and_finalize']}"
+            )
+        if result["payload_stream_sha256"] != KNOWN_PRODUCTION_PAYLOAD_STREAM_SHA256:
+            raise ValueError(
+                "exact production payload-stream SHA256 invariant failed: "
+                f"expected {KNOWN_PRODUCTION_PAYLOAD_STREAM_SHA256}, "
+                f"got {result['payload_stream_sha256']}"
+            )
     except Exception as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
         return 3
