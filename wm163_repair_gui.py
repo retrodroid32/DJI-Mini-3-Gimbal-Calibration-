@@ -24,7 +24,7 @@ import re
 import threading
 import traceback
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import mini3_gimbal_cal as cal
 import wm163_service_flash_live as service_fw
@@ -207,13 +207,14 @@ class WM163RepairGUI:
         conn = ttk.Frame(top)
         conn.pack(side="right", pady=2)
         ttk.Label(conn, text="Port:", style="Sub.TLabel").grid(row=0, column=0, padx=(0, 5))
-        self.port_combo = ttk.Combobox(conn, width=34, state="readonly")
+        self.port_combo = ttk.Combobox(conn, width=31, state="normal")
         self.port_combo.grid(row=0, column=1, padx=4)
         ttk.Button(conn, text="Refresh", command=self.refresh_ports).grid(row=0, column=2, padx=4)
+        ttk.Button(conn, text="Manual COM…", command=self.choose_manual_port).grid(row=0, column=3, padx=4)
         self.connect_btn = ttk.Button(conn, text="Connect", command=self.connect_test)
-        self.connect_btn.grid(row=0, column=3, padx=(4, 8))
+        self.connect_btn.grid(row=0, column=4, padx=(4, 8))
         self.status_label = ttk.Label(conn, text="DISCONNECTED", style="Status.TLabel")
-        self.status_label.grid(row=0, column=4, padx=4)
+        self.status_label.grid(row=0, column=5, padx=4)
 
         info_outer, info = self._panel(self.root, "Device Info")
         info_outer.pack(fill="x", padx=12, pady=5)
@@ -310,8 +311,43 @@ class WM163RepairGUI:
     # ---------- flasher page ----------
 
     def _build_flash_tab(self) -> None:
-        wrapper = ttk.Frame(self.flash_tab)
-        wrapper.pack(fill="both", expand=True, padx=4, pady=6)
+        # The flasher page is intentionally scrollable because the validation,
+        # file-picker, progress, action and log sections together are taller
+        # than many 768/900-pixel Windows desktops.
+        scroll_host = ttk.Frame(self.flash_tab)
+        scroll_host.pack(fill="both", expand=True, padx=4, pady=6)
+
+        canvas = tk.Canvas(
+            scroll_host,
+            bg=BG,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        page_scroll = ttk.Scrollbar(scroll_host, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=page_scroll.set)
+
+        page_scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        wrapper = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=wrapper, anchor="nw")
+
+        def sync_scrollregion(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def sync_width(event):
+            canvas.itemconfigure(window_id, width=event.width)
+
+        wrapper.bind("<Configure>", sync_scrollregion)
+        canvas.bind("<Configure>", sync_width)
+
+        def on_mousewheel(event):
+            delta = -1 if event.delta > 0 else 1
+            canvas.yview_scroll(delta * 3, "units")
+            return "break"
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", on_mousewheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
 
         flasher_outer, body = self._panel(wrapper, "FW Flasher")
         flasher_outer.pack(fill="both", expand=True)
@@ -492,28 +528,71 @@ class WM163RepairGUI:
         ttk.Button(bottom, text="Clear", command=self.clear_log).grid(row=0, column=1)
 
         self._append_log(
-            f"WM163 Repair Tool v{cal.VERSION}\\n"
-            "Service-FW live flashing is intentionally locked.\\n"
-            "Select the DJI USB Virtual COM port and press Connect.\\n\\n"
+            f"WM163 Repair Tool v{cal.VERSION}\n"
+            "Service-FW live flashing is intentionally locked.\n"
+            "Select the DJI USB Virtual COM port and press Connect.\n\n"
         )
 
     # ---------- serial / common tasks ----------
 
     def refresh_ports(self) -> None:
-        values: list[str] = []
+        found: list[tuple[int, str]] = []
         if list_ports is not None:
             for p in list_ports.comports():
-                values.append(f"{p.device} — {p.description or 'Serial device'}")
-        if not values:
-            values = ["COM23 — manual/default"]
+                desc = p.description or "Serial device"
+                haystack = f"{p.device} {desc} {getattr(p, 'manufacturer', '')}".lower()
+                vid = getattr(p, "vid", None)
 
-        current = self.port_combo.get()
+                is_dji = (
+                    vid == 0x2CA3
+                    or "dji" in haystack
+                    or "virtual com" in haystack
+                )
+                priority = 0 if is_dji else 1
+                tag = " [DJI]" if is_dji else ""
+                found.append((priority, f"{p.device} — {desc}{tag}"))
+
+        values = [text for _priority, text in sorted(found, key=lambda item: (item[0], item[1]))]
+        current = self.port_combo.get().strip()
         self.port_combo["values"] = values
-        if current in values:
+
+        # Preserve a manually typed COM port even if Windows is not currently
+        # advertising it through SetupAPI/list_ports.
+        current_port = current.split(" — ", 1)[0] if current else ""
+        current_known = next((v for v in values if v.split(" — ", 1)[0] == current_port), None)
+        if current_known:
+            self.port_combo.set(current_known)
+            return
+
+        dji_port = next((v for v in values if v.endswith("[DJI]")), None)
+        if dji_port:
+            self.port_combo.set(dji_port)
+        elif current:
             self.port_combo.set(current)
+        elif values:
+            self.port_combo.set(values[0])
         else:
-            preferred = next((v for v in values if v.startswith("COM23 ")), values[0])
-            self.port_combo.set(preferred)
+            self.port_combo.set("COM23")
+
+    def choose_manual_port(self) -> None:
+        current = self._port()
+        value = simpledialog.askstring(
+            "Manual COM Port",
+            "Enter the DJI USB Virtual COM port (for example COM23):",
+            initialvalue=current,
+            parent=self.root,
+        )
+        if not value:
+            return
+        value = value.strip().upper()
+        if not re.fullmatch(r"COM\d+", value):
+            messagebox.showerror(
+                "Invalid COM port",
+                "Enter a Windows COM port such as COM23.",
+                parent=self.root,
+            )
+            return
+        self.port_combo.set(f"{value} — manual DJI USB Virtual COM")
 
     def _port(self) -> str:
         text = self.port_combo.get().strip()
@@ -550,7 +629,7 @@ class WM163RepairGUI:
             else:
                 self.progress.stop()
         if busy:
-            self._append_log(f"\\n=== {label} ===\\n")
+            self._append_log(f"\n=== {label} ===\n")
 
     def _run_task(self, label: str, fn, done=None) -> None:
         if self.busy:
@@ -583,7 +662,7 @@ class WM163RepairGUI:
                     _, label, rc, output, callback = event
                     self._set_busy(False)
                     self._append_log(
-                        f"=== {label}: {'PASS' if rc == 0 else f'ENDED rc={rc}'} ===\\n"
+                        f"=== {label}: {'PASS' if rc == 0 else f'ENDED rc={rc}'} ===\n"
                     )
                     if callback:
                         callback(rc, output)
@@ -770,7 +849,7 @@ class WM163RepairGUI:
             return
         if not messagebox.askyesno(
             "Start Basic Calibration?",
-            "Remove the propellers, place the aircraft on a level surface, and keep it stationary.\\n\\n"
+            "Remove the propellers, place the aircraft on a level surface, and keep it stationary.\n\n"
             "Start normal DJI gimbal Auto Calibration?",
         ):
             return
@@ -785,9 +864,9 @@ class WM163RepairGUI:
             return
         if not messagebox.askyesno(
             "Start Advanced Calibration?",
-            "This is the capture-backed two-stage WM163 service calibration used to clear 40011.\\n\\n"
+            "This is the capture-backed two-stage WM163 service calibration used to clear 40011.\n\n"
             "It should only be run while the aircraft is in the correct Service FW state. "
-            "Remove propellers and keep the aircraft stationary.\\n\\nContinue?",
+            "Remove propellers and keep the aircraft stationary.\n\nContinue?",
         ):
             return
         port = self._port()
@@ -819,8 +898,8 @@ class WM163RepairGUI:
             return
         if not messagebox.askyesno(
             "Run 40021 Repair?",
-            "This repair writes the capture-confirmed short WM163 IMU value and then reboots the aircraft.\\n\\n"
-            "The tool refuses the write unless diagnostic 40021 is currently active.\\n\\nContinue?",
+            "This repair writes the capture-confirmed short WM163 IMU value and then reboots the aircraft.\n\n"
+            "The tool refuses the write unless diagnostic 40021 is currently active.\n\nContinue?",
         ):
             return
         port = self._port()
