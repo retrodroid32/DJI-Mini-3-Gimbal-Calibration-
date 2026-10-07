@@ -518,10 +518,11 @@ def main() -> int:
 
     if args.yes:
         print(
-            "BLOCKED: live flashing is disabled after packet-capture validation "
-            "found protocol mismatches in the previous reconstruction. "
-            "Use dry-run/offline trace comparison only until generated packets "
-            "match the genuine Dr.Grey WM163 capture.",
+            "BLOCKED: live flashing remains deliberately disabled even though "
+            "packet parity, state-machine validation, transport probes, and the "
+            "actual live-path offline replay now pass against the genuine Dr.Grey "
+            "WM163 capture. Re-enable live mode only as an explicit hardware-"
+            "validation decision.",
             file=sys.stderr,
         )
         return 6
