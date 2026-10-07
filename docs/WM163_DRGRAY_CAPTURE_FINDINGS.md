@@ -178,27 +178,61 @@ to:
 The Dr.Grey UI simultaneously reported calibration complete and validated by
 the gimbal.
 
-## 40021 repair operation
+## 40021 repair operation — capture-confirmed
 
-The later Fix Gimbal IMU Sensor 40021 operation is distinct from the
-04/08 calibration flow.
+The genuine Dr.Grey Fix Gimbal IMU Sensor 40021 operation confirms the
+project's existing short repair path exactly.
 
-The capture shows CmdSet 0x21 / CmdId 0x11 traffic addressed to multiple DJI
-nodes, including raw targets observed as:
+Captured request:
 
 ```text
-0x12
-0xC3
-0x01
-0x04
-0x02
+sender=0x0A
+dst=0x04
+seq=0x0064
+flags=0x40
+cmdset/cmd=04/36
+payload=42 E9 7F 3F
 ```
 
-Do not assign undocumented semantics to those targets until their request and
-response payloads are fully decoded.
+Captured response about 186.7 ms later:
 
-The existing known-working 40021 repair path must remain unchanged unless a
-capture-backed correction is proven.
+```text
+sender=0x04
+dst=0x0A
+seq=0x0064
+flags=0x80
+cmdset/cmd=04/36
+payload=<empty>
+```
+
+The empty ACK is therefore the genuine success condition.
+
+About 1.64 seconds after the 04/36 request, Dr.Grey sends the reboot/power
+transition command:
+
+```text
+sender=0x2A
+dst=0x0B
+seq=0x0065
+flags=0x40
+cmdset/cmd=00/0B
+payload=00 01 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+The response is status 00 and aircraft shutdown/reboot activity follows.
+
+Earlier observations of CmdSet 0x21 / CmdId 0x11 traffic were misattributed to
+the repair. Those packets occur roughly 113-120 seconds later after reconnect
+and are not the 40021 write itself.
+
+Therefore the existing known-working project behavior is now independently
+capture-confirmed:
+
+```text
+04/36 42 E9 7F 3F
+-> require empty ACK
+-> battery/PMU reboot
+```
 
 ## Project changes derived from this capture
 
@@ -443,3 +477,33 @@ the captured genuine Dr.Grey Service-FW run.
 
 Live flashing remains disabled pending review of the remaining calibration
 workflow and any uncaptured runtime assumptions.
+
+
+## Advanced Calibration validator — PASS
+
+The genuine Dr.Grey capture was validated offline with
+`validate_wm163_advanced_calibration.py`.
+
+Observed:
+
+```text
+WM163 Dr.Grey Advanced Calibration: PASS
+DUML frames found: 161649
+Joint Coarse request seq: 0x0062
+Joint Coarse -> 64 00: 84.127 s
+64 00 -> Linear Hall request: 0.138 s
+Linear Hall request seq: 0x0063
+Linear Hall -> 64 00: 80.087 s
+04/12 keepalives: 49
+04/12 median interval: 3.282 s
+Linear Hall -> first 00/F1 clear: 75.136 s
+Final 64 00 -> confirmed 00/F1 clear: 0.049 s
+```
+
+No FLYC 00/01 keepalive was observed during this genuine WM163 Advanced
+Calibration window. The capture-confirmed service-calibration keepalive is the
+GIMBAL 04/12 packet with payload:
+
+```text
+E6 01 43 00 00 00 00 00 00 00 00 08
+```
