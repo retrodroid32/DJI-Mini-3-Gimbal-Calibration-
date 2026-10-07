@@ -51,12 +51,12 @@ class _FakeSer:
         return b""
 
 
-def test_serial_transport_write_resets_before_write():
+def test_gray_transport_write_resets_before_write():
     from wm163_service_flash_live import SerialTransport
 
     fake = _FakeSer()
     tp = SerialTransport(fake)
-    tp.write(b"abc")
+    tp.gray_write(b"abc")
     assert fake.calls == [
         ("reset_input_buffer",),
         ("write", b"abc"),
@@ -85,3 +85,55 @@ def test_read_raw_window_returns_on_first_available_burst():
     got = tp.read_raw_window(400)
     assert got == b"\xaa\xbb\xcc\xdd"
     assert fake.calls == [("read", 4)]
+
+
+class _SessionBWriteSer:
+    def __init__(self):
+        self.calls = []
+        self.timeout = 0.04
+    def write(self, data):
+        self.calls.append(("write", bytes(data)))
+        return len(data)
+    def flush(self):
+        self.calls.append(("flush",))
+    def reset_input_buffer(self):
+        self.calls.append(("reset_input_buffer",))
+    def read(self, n):
+        self.calls.append(("read", n, self.timeout))
+        return b""
+
+
+def test_session_b_write_is_write_flush_only():
+    from wm163_service_flash_live import SerialTransport
+
+    fake = _SessionBWriteSer()
+    tp = SerialTransport(fake)
+    tp.session_b_write(b"abc")
+    assert fake.calls == [
+        ("write", b"abc"),
+        ("flush",),
+    ]
+
+
+class _ReadBurstSer:
+    def __init__(self):
+        self.calls = []
+        self.timeout = 9.0
+        self.responses = [b"\xaa\xbb\xcc\xdd", b""]
+    def read(self, n):
+        self.calls.append(("read", n, self.timeout))
+        return self.responses.pop(0)
+
+
+def test_read_burst_reads_until_first_empty_and_restores_timeout():
+    from wm163_service_flash_live import SerialTransport
+
+    fake = _ReadBurstSer()
+    tp = SerialTransport(fake)
+    got = tp.read_burst(budget_ms=120, read_timeout_ms=40)
+    assert got == b"\xaa\xbb\xcc\xdd"
+    assert fake.calls == [
+        ("read", 4096, 0.04),
+        ("read", 4096, 0.04),
+    ]
+    assert fake.timeout == 9.0
