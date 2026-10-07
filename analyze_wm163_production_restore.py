@@ -22,6 +22,19 @@ import wm163_production_fw as production_fw
 import wm163_service_flash_live as service_fw
 
 
+KNOWN_PRODUCTION_SESSION_B_FILES = (
+    ("wm163.cfg.sig", 2_336),
+    ("wm163_0100_v01.64.01.52_20231130.pro.fw.sig", 40_760_352),
+    ("wm163_0105_v12.07.00.12_20221213.pro.fw.sig", 245_856),
+    ("wm163_0306_v03.04.11.34_20240513.pro.fw.sig", 1_765_152),
+    ("wm163_0905_v01.00.01.27_20220919.pro.fw.sig", 10_390_912),
+    ("wm163_1100_v10.75.00.17_20221108.pro.fw.sig", 94_720),
+    ("wm163_1200_v01.10.02.15_20221010.pro.fw.sig", 56_352),
+)
+KNOWN_PRODUCTION_SESSION_B_TOTAL_SIZE = 53_315_680
+KNOWN_PRODUCTION_SESSION_B_FINALIZE_SEQ = 0x04C0
+
+
 def validate_loader(loader_path: pathlib.Path) -> bytes:
     loader = loader_path.read_bytes()
     if len(loader) != service_fw.KNOWN_LOADER_SIZE:
@@ -55,6 +68,26 @@ def analyze(package_path: pathlib.Path, loader_path: pathlib.Path) -> dict[str, 
         raise ValueError("production archive contains no transferable signed package members")
 
     summary = transfer_summary(files)
+
+    actual_files = tuple((name, len(blob)) for name, blob in files)
+    if actual_files != KNOWN_PRODUCTION_SESSION_B_FILES:
+        raise ValueError(
+            "production Session-B member layout mismatch: "
+            f"expected {KNOWN_PRODUCTION_SESSION_B_FILES!r}, got {actual_files!r}"
+        )
+    if summary["total_size"] != KNOWN_PRODUCTION_SESSION_B_TOTAL_SIZE:
+        raise ValueError(
+            "production Session-B total-size mismatch: "
+            f"expected {KNOWN_PRODUCTION_SESSION_B_TOTAL_SIZE}, "
+            f"got {summary['total_size']}"
+        )
+    if summary["finalize_seq"] != KNOWN_PRODUCTION_SESSION_B_FINALIZE_SEQ:
+        raise ValueError(
+            "production Session-B final-sequence mismatch: "
+            f"expected 0x{KNOWN_PRODUCTION_SESSION_B_FINALIZE_SEQ:04X}, "
+            f"got 0x{summary['finalize_seq']:04X}"
+        )
+
     return {
         "device": info.device,
         "formal": info.formal,
@@ -121,6 +154,7 @@ def main() -> int:
         print(f"session_b_file={name} size={size}")
     print(f"session_b_total_size={result['total_size']}")
     print(f"predicted_session_b_finalize_seq=0x{result['finalize_seq']:04X}")
+    print("session_b_sequence_rollover=REQUIRED (16-bit wrap past 0xFFFF)")
     print()
     print("NO SERIAL PORT WAS OPENED. NO FIRMWARE WAS WRITTEN.")
     print(
