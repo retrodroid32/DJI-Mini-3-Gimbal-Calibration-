@@ -586,3 +586,50 @@ Byte-for-byte regression tests now cover:
 3. 04/12 gimbal keepalive
 4. short 40021 04/36 request
 5. battery/PMU reboot
+
+
+## Final offline regression checkpoint — 33/33 PASS
+
+After incorporating the genuine Dr.Grey capture findings and correcting the
+remaining calibration/reboot packet builders, the focused regression suite was
+run under Python 3.14.
+
+Result:
+
+```text
+33 passed in 0.28s
+```
+
+Coverage includes:
+
+- Session-A control payloads and sequencing
+- Session-A captured chunk-index DATA semantics
+- Session-B captured per-file chunk-index semantics
+- Session-B one-sequence gap after every file START
+- B/FINALIZE sequence 0xFF8A
+- B/FINALIZE F7 acceptance scoped only to that command
+- Dr.Grey gray/control reset-before-write behavior
+- Dr.Grey Session-B write+flush-only behavior
+- Dr.Grey read_burst first-empty termination behavior
+- byte-for-byte Joint Coarse 04/08 request
+- byte-for-byte Linear Hall 04/08 request
+- byte-for-byte WM163 04/12 keepalive
+- byte-for-byte short 40021 04/36 request
+- byte-for-byte battery/PMU reboot packet
+
+Together with the separate offline validators, the project now has
+capture-backed validation for:
+
+1. Service-FW packet stream
+2. Service-FW state-machine transitions
+3. Advanced Calibration sequence and validation
+4. short 40021 repair and reboot sequence
+
+Important boundary:
+
+**Capture parity is not the same as completed live validation of this project's
+implementation.** The genuine Dr.Grey run is known-good; this project should
+remain treated as capture-verified research/repair tooling until its own live
+path is deliberately hardware-validated.
+
+Service-FW live mode remains hard-disabled.
