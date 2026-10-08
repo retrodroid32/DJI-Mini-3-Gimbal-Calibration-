@@ -14,13 +14,19 @@ the aircraft, so no conclusion below relies on a new hardware experiment.
 
 ## Important DrGrey finding
 
-The recovered DrGrey application does not contain a hidden stock/production
-restore workflow for Mini 3. Its Mini-3 flasher UI and dedicated Mini-3
-flasher modules are explicitly service-firmware workflows. The unrelated
-"restore" strings found elsewhere refer to calibration/eMMC backup restore.
+Review of the recovered DrGrey package has **not identified an independently
+verified Mini 3 stock/production-restore worker**. The named Mini-3 flasher
+components and UI paths have service-firmware evidence, while other recovered
+"restore" terms relate to calibration/eMMC backup restore.
+
+The absence of a *named* stock-restore worker is not proof that generic
+compiled code cannot be reused for production firmware. In particular,
+`fetch_mini3_fw` and `_M3FlashWorker` must not be assumed to implement a
+working WM163 stock-restore pipeline without an established call path and
+capture/static behavioral evidence.
 
 Therefore a production restore must not be claimed as a recovered DrGrey
-feature.
+feature, and the GUI restore control remains locked.
 
 ## Independently recovered generic updater grammar
 
