@@ -121,3 +121,31 @@ orchestration:
 
 Until those are recovered from independent binary/capture evidence, the GUI
 Restore Production FW control must remain locked.
+
+## Public generic upgrade-status messages (read-only)
+
+Independent public reference: [o-gs/dji-firmware-tools DJI General 0x42 dissector](https://github.com/o-gs/dji-firmware-tools/blob/master/comm_dissector/wireshark/dji-dumlv1-general.lua).
+
+The General command set `00/42` is labeled **Fw Upgrade Push Status**.
+Its status payload (after DUML framing) has four documented states:
+
+| First byte | State | Remaining fields |
+| --- | --- | --- |
+| `01` | Verify | None |
+| `02` | UserConfirm | Time, reserved byte |
+| `03` | Upgrading | Percent, packed 3-bit current index + 5-bit upgrade times |
+| `04` | Complete | Completion reason, upgrade times |
+
+Completion reasons 1–10 include success (1), failure (2), firmware error
+(3), same version (4), cancellation (5), timeout (6), motor working (7),
+firmware mismatch (8), illegal downgrade (9), and RC not connected (10).
+
+`wm163_upgrade_status_offline.py` adds a **read-only payload decoder** and
+`tests/test_wm163_upgrade_status_offline.py` adds synthetic, public-protocol
+fixtures. Its `reports_success` field reports only the meaning of a parsed
+generic status message; it cannot verify a WM163 restore or hardware outcome.
+
+**Evidence: PUBLIC-PROTOCOL-CORROBORATED only.** No genuine WM163 stock
+restore `00/42` capture was recovered; this does not establish a destination,
+command sequence, ARB/rollback policy, FINALIZE ACK, or reboot protocol.
+Production restore remains locked.
